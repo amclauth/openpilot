@@ -58,6 +58,12 @@ def manager_init() -> None:
   if params.get_bool("RecordFrontLock"):
     params.put_bool("RecordFront", True)
 
+  # Clear stale params that should respect new defaults
+  for stale_key in ("FPSCounter", "OnroadDistanceButton"):
+    if params.get(stale_key) is not None:
+      params.remove(stale_key)
+      params_cache.remove(stale_key)
+
   # set unset params
   reset_toggles = params.get_bool("DoToggleReset")
   reset_toggles_stock = params.get_bool("DoToggleResetStock")
