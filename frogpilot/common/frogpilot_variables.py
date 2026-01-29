@@ -827,13 +827,14 @@ class FrogPilotVariables:
         selectable_models = [model for model in downloaded_models if model not in blacklisted_models]
         toggle.model = random.choice(selectable_models) if selectable_models else DEFAULT_MODEL
         toggle.model_name = "Mystery Model 👻"
-        toggle.model_version = model_versions.split(",")[toggle.available_models.split(",").index(toggle.model)]
+        model_version_map = dict(zip(toggle.available_models.split(","), model_versions.split(",")))
+        toggle.model_version = model_version_map.get(toggle.model, DEFAULT_MODEL_VERSION)
     else:
       model = ((params.get("Model", encoding="utf-8") if tuning_level >= level["Model"] else default.get("Model", encoding="utf-8")) or DEFAULT_MODEL).removesuffix("_default")
       if model in downloaded_models:
         toggle.model = model
-        toggle.model_name = dict(zip(toggle.available_models.split(","), toggle.available_model_names.split(",")))[toggle.model]
-        toggle.model_version = dict(zip(toggle.available_models.split(","), model_versions.split(",")))[toggle.model]
+        toggle.model_name = dict(zip(toggle.available_models.split(","), toggle.available_model_names.split(","))).get(toggle.model, DEFAULT_MODEL_NAME)
+        toggle.model_version = dict(zip(toggle.available_models.split(","), model_versions.split(","))).get(toggle.model, DEFAULT_MODEL_VERSION)
       else:
         toggle.model = DEFAULT_MODEL
         toggle.model_name = DEFAULT_MODEL_NAME
