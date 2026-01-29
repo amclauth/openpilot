@@ -34,6 +34,7 @@ _services: dict[str, tuple] = {
   "errorLogMessage": (True, 0., 1),
   "liveCalibration": (True, 4., 4),
   "liveTorqueParameters": (True, 4., 1),
+  "liveDelay": (True, 4., 1),
   "androidLog": (True, 0.),
   "carState": (True, 100., 10),
   "carControl": (True, 100., 10),
@@ -47,7 +48,8 @@ _services: dict[str, tuple] = {
   "gnssMeasurements": (True, 10., 10),
   "clocks": (True, 0.1, 1),
   "ubloxRaw": (True, 20.),
-  "liveLocationKalman": (True, 20., 5),
+  "livePose": (True, 20., 4),
+  "liveLocationKalman": (True, 20.),
   "liveParameters": (True, 20., 5),
   "cameraOdometry": (True, 20., 5),
   "thumbnail": (True, 0.2, 1),
@@ -60,6 +62,7 @@ _services: dict[str, tuple] = {
   "driverMonitoringState": (True, 20., 10),
   "wideRoadEncodeIdx": (False, 20., 1),
   "wideRoadCameraState": (True, 20., 20),
+  "drivingModelData": (True, 20., 10),
   "modelV2": (True, 20., 40),
   "managerState": (True, 2., 1),
   "uploaderState": (True, 0., 1),
@@ -72,13 +75,6 @@ _services: dict[str, tuple] = {
   "qRoadEncodeIdx": (False, 20.),
   "userFlag": (True, 0., 1),
   "microphone": (True, 10., 10),
-
-  # FrogPilot
-  "frogpilotCarControl": (True, 100., 10),
-  "frogpilotCarState": (True, 100., 10),
-  "frogpilotDeviceState": (True, 2., 1),
-  "frogpilotNavigation": (True, 1., 10),
-  "frogpilotPlan": (True, 20., 5),
 
   # debug
   "uiDebug": (True, 0., 1),
@@ -96,6 +92,18 @@ _services: dict[str, tuple] = {
   "customReservedRawData0": (True, 0.),
   "customReservedRawData1": (True, 0.),
   "customReservedRawData2": (True, 0.),
+
+  # FrogPilot
+  "frogpilotCarControl": (True, 100., 10),
+  "frogpilotCarParams": (True, 0.02, 1),
+  "frogpilotCarState": (True, 100., 10),
+  "frogpilotControlsState": (True, 100., 10),
+  "frogpilotDeviceState": (True, 2., 1),
+  "frogpilotModelV2": (True, 20., 40),
+  "frogpilotNavigation": (True, 1., 10),
+  "frogpilotOnroadEvents": (True, 1., 1),
+  "frogpilotPlan": (True, 20., 5),
+  "frogpilotRadarState": (True, 20., 5),
 }
 SERVICE_LIST = {name: Service(*vals) for
                 idx, (name, vals) in enumerate(_services.items())}

@@ -15,7 +15,6 @@ import sys
 import tempfile
 import threading
 import time
-import asyncio
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from functools import partial
@@ -40,9 +39,11 @@ from openpilot.system.loggerd.xattr_cache import getxattr, setxattr
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.version import get_build_metadata
 from openpilot.system.hardware.hw import Paths
-from openpilot.system.athena.streamer import Streamer
 
-ATHENA_HOST = os.getenv('ATHENA_HOST', 'wss://athena.konik.ai')
+from openpilot.frogpilot.common.frogpilot_utilities import use_konik_server
+
+ATHENA_HOST = os.getenv('ATHENA_HOST', 'wss://athena.comma.ai')
+KONIK_ATHENA_HOST = os.getenv('ATHENA_HOST', 'wss://athena.konik.ai')
 HANDLER_THREADS = int(os.getenv('HANDLER_THREADS', "4"))
 LOCAL_PORT_WHITELIST = {8022}
 
@@ -100,9 +101,6 @@ upload_queue: Queue[UploadItem] = queue.Queue()
 low_priority_send_queue: Queue[str] = queue.Queue()
 log_recv_queue: Queue[str] = queue.Queue()
 cancelled_uploads: set[str] = set()
-sdp_recv_queue: Queue[str] = queue.Queue()
-sdp_send_queue: Queue[str] = queue.Queue()
-ice_send_queue: Queue[str] = queue.Queue()
 
 cur_upload_items: dict[int, UploadItem | None] = {}
 
@@ -147,6 +145,9 @@ def handle_long_poll(ws: WebSocket, exit_event: threading.Event | None) -> None:
     threading.Thread(target=ws_recv, args=(ws, end_event), name='ws_recv'),
     threading.Thread(target=ws_send, args=(ws, end_event), name='ws_send'),
     threading.Thread(target=upload_handler, args=(end_event,), name='upload_handler'),
+    threading.Thread(target=upload_handler, args=(end_event,), name='upload_handler2'),
+    threading.Thread(target=upload_handler, args=(end_event,), name='upload_handler3'),
+    threading.Thread(target=upload_handler, args=(end_event,), name='upload_handler4'),
     threading.Thread(target=log_handler, args=(end_event,), name='log_handler'),
     threading.Thread(target=stat_handler, args=(end_event,), name='stat_handler'),
   ] + [
@@ -167,41 +168,6 @@ def handle_long_poll(ws: WebSocket, exit_event: threading.Event | None) -> None:
     for thread in threads:
       cloudlog.debug(f"athena.joining {thread.name}")
       thread.join()
-
-
-def rtc_handler(exit_event: threading.Event, sdp_send_queue: queue.Queue, sdp_recv_queue: queue.Queue, ice_recv_queue: queue.Queue) -> None:
-  loop = asyncio.new_event_loop()
-  asyncio.set_event_loop(loop)
-  try:
-    streamer = Streamer(sdp_send_queue, sdp_recv_queue, ice_recv_queue)
-    loop.run_until_complete(streamer.event_loop(exit_event))
-  finally:
-    loop.close()
-
-@dispatcher.add_method
-def setSdpAnswer(answer):
-  sdp_recv_queue.put_nowait(answer)
-
-@dispatcher.add_method
-def getSdp():
-  start_time = time.time()
-  timeout = 10
-  while time.time() - start_time < timeout:
-    try:
-      sdp = json.loads(sdp_send_queue.get(timeout=0.1))
-      if sdp:
-        return sdp
-    except queue.Empty:
-      pass
-
-@dispatcher.add_method
-def getIce():
-  if not ice_send_queue.empty():
-    return json.loads(ice_send_queue.get_nowait())
-  else:
-    return {
-      'error': True
-    }
 
 
 def jsonrpc_handler(end_event: threading.Event) -> None:
@@ -296,13 +262,13 @@ def upload_handler(end_event: threading.Event) -> None:
           sz = -1
 
         cloudlog.event("athena.upload_handler.upload_start", fn=fn, sz=sz, network_type=network_type, metered=metered, retry_count=item.retry_count)
-        response = _do_upload(item, partial(cb, sm, item, tid, end_event))
 
-        if response.status_code not in (200, 201, 401, 403, 412):
-          cloudlog.event("athena.upload_handler.retry", status_code=response.status_code, fn=fn, sz=sz, network_type=network_type, metered=metered)
-          retry_upload(tid, end_event)
-        else:
-          cloudlog.event("athena.upload_handler.success", fn=fn, sz=sz, network_type=network_type, metered=metered)
+        with _do_upload(item, partial(cb, sm, item, tid, end_event)) as response:
+          if response.status_code not in (200, 201, 401, 403, 412):
+            cloudlog.event("athena.upload_handler.retry", status_code=response.status_code, fn=fn, sz=sz, network_type=network_type, metered=metered)
+            retry_upload(tid, end_event)
+          else:
+            cloudlog.event("athena.upload_handler.success", fn=fn, sz=sz, network_type=network_type, metered=metered)
 
         UploadQueueCache.cache(upload_queue)
       except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.SSLError):
@@ -571,17 +537,6 @@ def getNetworks():
 
 
 @dispatcher.add_method
-def getManagerURL():
-  ip_addr = HARDWARE.get_ipv4_address()
-  if ip_addr:
-    return {
-      'url': f"http://{ip_addr}:8082",
-    }
-  else:
-    raise Exception("Network Error")
-
-
-@dispatcher.add_method
 def takeSnapshot() -> str | dict[str, str] | None:
   from openpilot.system.camerad.snapshot.snapshot import jpeg_write, snapshot
   ret = snapshot()
@@ -835,15 +790,11 @@ def main(exit_event: threading.Event = None):
   dongle_id = params.get("DongleId", encoding='utf-8')
   UploadQueueCache.initialize(upload_queue)
 
-  ws_uri = ATHENA_HOST + "/ws/v2/" + dongle_id
+  ws_uri = (KONIK_ATHENA_HOST if use_konik_server() else ATHENA_HOST) + "/ws/v2/" + dongle_id
   api = Api(dongle_id)
 
   conn_start = None
   conn_retries = 0
-
-  #if Params().get_bool("EnableStreamer"):
-  threading.Thread(target=rtc_handler, args=(exit_event, sdp_send_queue, sdp_recv_queue, ice_send_queue), name='rtc_handler').start()
-
   while exit_event is None or not exit_event.is_set():
     try:
       if conn_start is None:

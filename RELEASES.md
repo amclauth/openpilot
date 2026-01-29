@@ -1,12 +1,5 @@
-Version 0.9.7 (2025-02-26)
+Version 0.9.7 (2024-06-13)
 ========================
-* Go to https://stable.konik.ai to view drives and set navigation
-* Pair your device to view map and access free prime features
-* Live Stream cameras through the website with a toggle
-* Radar Interceptor support with a toggle
-* Torque Interceptor support with a toggle
-* Support for cars with No MRCC or Front camera with a toggle
-* Toggle to connect FrogPilot Server instead of comma server
 * New driving model
   * Inputs the past curvature for smoother and more accurate lateral control
   * Simplified neural network architecture in the model's last layers

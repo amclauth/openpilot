@@ -16,12 +16,6 @@ enum ParamKeyType {
   CLEAR_ON_OFFROAD_TRANSITION = 0x10,
   DONT_LOG = 0x20,
   DEVELOPMENT_ONLY = 0x40,
-  FROGPILOT_CONTROLS = 0x80,
-  FROGPILOT_OTHER = 0x400,
-  FROGPILOT_STORAGE = 0x800,
-  FROGPILOT_TRACKING = 0x1000,
-  FROGPILOT_VEHICLES = 0x100,
-  FROGPILOT_VISUALS = 0x200,
   ALL = 0xFFFFFFFF
 };
 
@@ -77,11 +71,9 @@ public:
   inline void putBoolNonBlocking(const std::string &key, bool val) {
     putNonBlocking(key, val ? "1" : "0");
   }
-  void putIntNonBlocking(const std::string &key, const std::string &val);
   inline void putIntNonBlocking(const std::string &key, int val) {
     putNonBlocking(key, std::to_string(val));
   }
-  void putFloatNonBlocking(const std::string &key, const std::string &val);
   inline void putFloatNonBlocking(const std::string &key, float val) {
     putNonBlocking(key, std::to_string(val));
   }

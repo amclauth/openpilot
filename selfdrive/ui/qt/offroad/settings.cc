@@ -1,14 +1,10 @@
 #include <cassert>
 #include <cmath>
-#include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include <QDebug>
-#include <QScrollBar>
 
 #include "common/watchdog.h"
 #include "common/util.h"
@@ -19,10 +15,7 @@
 #include "selfdrive/ui/qt/widgets/scrollview.h"
 #include "selfdrive/ui/qt/widgets/ssh_keys.h"
 
-#include "selfdrive/frogpilot/navigation/ui/navigation_settings.h"
-#include "selfdrive/frogpilot/ui/qt/offroad/control_settings.h"
-#include "selfdrive/frogpilot/ui/qt/offroad/vehicle_settings.h"
-#include "selfdrive/frogpilot/ui/qt/offroad/visual_settings.h"
+#include "frogpilot/ui/qt/offroad/frogpilot_settings.h"
 
 TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // param, title, desc, icon
@@ -50,9 +43,8 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
     },
     {
       "BlendedACC",
-      tr("Blended Acc"),
-      tr("Uses Mazda Radar Cruise Control (MRCC) when not in Experimental mode. "
-        "Pair this with Conditional Experimental mode to allow openpilot to handle gas and brakes when Experimental mode is automatically enabled, while still relying on MRCC for refined speed control."),
+      tr("Blended Acc (Experimental)"),
+      tr("Blend stock MRCC and Experimental Mode longitudinal control."),
       "../assets/offroad/icon_openpilot.png",
     },
     {
@@ -168,8 +160,8 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   });
 
   // FrogPilot signals
-  connect(toggles["IsMetric"], &ToggleControl::toggleFlipped, [=]() {
-    updateMetric();
+  connect(toggles["IsMetric"], &ToggleControl::toggleFlipped, [=](bool metric) {
+    updateMetric(metric);
   });
 }
 
@@ -194,12 +186,15 @@ void TogglesPanel::showEvent(QShowEvent *event) {
 }
 
 void TogglesPanel::updateToggles() {
+  FrogPilotUIState &fs = *frogpilotUIState();
+  QJsonObject &frogpilot_toggles = fs.frogpilot_toggles;
+
   auto disengage_on_accelerator_toggle = toggles["DisengageOnAccelerator"];
-  disengage_on_accelerator_toggle->setVisible(!params.getBool("AlwaysOnLateral"));
+  disengage_on_accelerator_toggle->setVisible(!frogpilot_toggles.value("always_on_lateral").toBool());
   auto driver_camera_toggle = toggles["RecordFront"];
-  driver_camera_toggle->setVisible(!(params.getBool("DeviceManagement") && params.getBool("NoLogging") && params.getBool("NoUploads")));
+  driver_camera_toggle->setVisible(!(frogpilot_toggles.value("no_logging").toBool() && frogpilot_toggles.value("no_uploads").toBool()));
   auto nav_settings_left_toggle = toggles["NavSettingLeftSide"];
-  nav_settings_left_toggle->setVisible(!params.getBool("FullMap"));
+  nav_settings_left_toggle->setVisible(!frogpilot_toggles.value("full_map").toBool());
 
   auto experimental_mode_toggle = toggles["ExperimentalMode"];
   auto op_long_toggle = toggles["ExperimentalLongitudinalEnabled"];
@@ -228,13 +223,7 @@ void TogglesPanel::updateToggles() {
     op_long_toggle->setVisible(CP.getExperimentalLongitudinalAvailable());
     if (hasLongitudinalControl(CP)) {
       // normal description and toggle
-      bool conditional_experimental = params.getBool("ConditionalExperimental");
-      if (conditional_experimental) {
-        params.putBool("ExperimentalMode", true);
-        params.putBool("ExperimentalModeConfirmed", true);
-        experimental_mode_toggle->refresh();
-      }
-      experimental_mode_toggle->setEnabled(!conditional_experimental);
+      experimental_mode_toggle->setEnabled(true);
       experimental_mode_toggle->setDescription(e2e_description);
       long_personality_setting->setEnabled(true);
     } else {
@@ -266,7 +255,7 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   addItem(new LabelControl(tr("Serial"), params.get("HardwareSerial").c_str()));
 
   pair_device = new ButtonControl(tr("Pair Device"), tr("PAIR"),
-                                  tr("Pair your device with comma connect (connect.comma.ai) and claim your comma prime offer."));
+                                  useKonikServer() ? tr("Pair your device with Konik connect (stable.konik.ai).") : tr("Pair your device with comma connect (connect.comma.ai) and claim your comma prime offer."));
   connect(pair_device, &ButtonControl::clicked, [=]() {
     PairingPopup popup(this);
     popup.exec();
@@ -280,12 +269,14 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   connect(dcamBtn, &ButtonControl::clicked, [=]() { emit showDriverView(); });
   addItem(dcamBtn);
 
-  resetCalibBtn = new ButtonControl(tr("Reset Calibration"), tr("RESET"), "");
+  auto resetCalibBtn = new ButtonControl(tr("Reset Calibration"), tr("RESET"), "");
   connect(resetCalibBtn, &ButtonControl::showDescriptionEvent, this, &DevicePanel::updateCalibDescription);
   connect(resetCalibBtn, &ButtonControl::clicked, [&]() {
     if (ConfirmationDialog::confirm(tr("Are you sure you want to reset calibration?"), tr("Reset"), this)) {
       params.remove("CalibrationParams");
       params.remove("LiveTorqueParameters");
+      params.remove("LiveParameters");
+      params.remove("LiveDelay");
     }
   });
   addItem(resetCalibBtn);
@@ -329,406 +320,7 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
         btn->setEnabled(offroad);
       }
     }
-    for (FrogPilotButtonsControl *btn : findChildren<FrogPilotButtonsControl *>()) {
-      if (btn != forceStartedBtn) {
-        btn->setEnabled(offroad);
-      }
-    }
   });
-
-  // Delete driving footage
-  ButtonControl *deleteDrivingDataBtn = new ButtonControl(tr("Delete Driving Data"), tr("DELETE"), tr("This button provides a swift and secure way to permanently delete all "
-    "stored driving footage and data from your device. Ideal for maintaining privacy or freeing up space."));
-  connect(deleteDrivingDataBtn, &ButtonControl::clicked, [=]() {
-    if (ConfirmationDialog::confirm(tr("Are you sure you want to permanently delete all of your driving footage and data?"), tr("Delete"), this)) {
-      std::thread([&] {
-        deleteDrivingDataBtn->setEnabled(false);
-        deleteDrivingDataBtn->setValue(tr("Deleting footage..."));
-
-        std::system("rm -rf /data/media/0/realdata");
-
-        deleteDrivingDataBtn->setValue(tr("Deleted!"));
-
-        util::sleep_for(2000);
-        deleteDrivingDataBtn->setValue("");
-        deleteDrivingDataBtn->setEnabled(true);
-      }).detach();
-    }
-  });
-  addItem(deleteDrivingDataBtn);
-
-  // Screen recordings
-  FrogPilotButtonsControl *screenRecordingsBtn = new FrogPilotButtonsControl(tr("Screen Recordings"), {tr("DELETE"), tr("RENAME")}, tr("Delete or rename your screen recordings."));
-  connect(screenRecordingsBtn, &FrogPilotButtonsControl::buttonClicked, [=](int id) {
-    QDir recordingsDir("/data/media/0/videos");
-    QStringList recordingsNames = recordingsDir.entryList(QDir::Files | QDir::NoDotAndDotDot);
-
-    if (id == 0) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a recording to delete"), recordingsNames, "", this);
-      if (!selection.isEmpty()) {
-        if (!ConfirmationDialog::confirm(tr("Are you sure you want to delete this recording?"), tr("Delete"), this)) return;
-        std::thread([=]() {
-          screenRecordingsBtn->setEnabled(false);
-          screenRecordingsBtn->setValue(tr("Deleting..."));
-
-          QFile fileToDelete(recordingsDir.absoluteFilePath(selection));
-          if (fileToDelete.remove()) {
-            screenRecordingsBtn->setValue(tr("Deleted!"));
-          } else {
-            screenRecordingsBtn->setValue(tr("Failed..."));
-          }
-
-          util::sleep_for(2000);
-          screenRecordingsBtn->setValue("");
-          screenRecordingsBtn->setEnabled(true);
-        }).detach();
-      }
-
-    } else if (id == 1) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a recording to rename"), recordingsNames, "", this);
-      if (!selection.isEmpty()) {
-        QString newName = InputDialog::getText(tr("Enter a new name"), this, tr("Rename Recording"));
-        if (!newName.isEmpty()) {
-          std::thread([=]() {
-            screenRecordingsBtn->setEnabled(false);
-            screenRecordingsBtn->setValue(tr("Renaming..."));
-
-            QString oldPath = recordingsDir.absoluteFilePath(selection);
-            QString newPath = recordingsDir.absoluteFilePath(newName);
-
-            if (QFile::rename(oldPath, newPath)) {
-              screenRecordingsBtn->setValue(tr("Renamed!"));
-            } else {
-              screenRecordingsBtn->setValue(tr("Failed..."));
-            }
-
-            util::sleep_for(2000);
-            screenRecordingsBtn->setValue("");
-            screenRecordingsBtn->setEnabled(true);
-          }).detach();
-        }
-      }
-    }
-  });
-  addItem(screenRecordingsBtn);
-
-  // Backup FrogPilot
-  FrogPilotButtonsControl *frogpilotBackupBtn = new FrogPilotButtonsControl(tr("FrogPilot Backups"), {tr("BACKUP"), tr("DELETE"), tr("RESTORE")}, tr("Backup, delete, or restore your FrogPilot backups."));
-  connect(frogpilotBackupBtn, &FrogPilotButtonsControl::buttonClicked, [=](int id) {
-    QDir backupDir("/data/backups");
-    QStringList backupNames = backupDir.entryList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
-    backupNames = backupNames.filter(QRegularExpression("^(?!.*_in_progress$).*$"));
-
-    if (id == 0) {
-      QString nameSelection = InputDialog::getText(tr("Name your backup"), this, "", false, 1);
-      if (!nameSelection.isEmpty()) {
-        bool compressed = FrogPilotConfirmationDialog::yesorno(tr("Do you want to compress this backup? The end file size will be 2.25x smaller, but can take 10+ minutes."), this);
-        std::thread([=]() {
-          frogpilotBackupBtn->setEnabled(false);
-          frogpilotBackupBtn->setValue(tr("Backing up..."));
-
-          std::string fullBackupPath = backupDir.absolutePath().toStdString() + "/" + nameSelection.toStdString();
-          std::string inProgressBackupPath = fullBackupPath + "_in_progress";
-          std::string command = "mkdir -p " + inProgressBackupPath + " && rsync -av /data/openpilot/ " + inProgressBackupPath + "/";
-
-          int result = std::system(command.c_str());
-
-          if (result == 0) {
-            if (compressed) {
-              frogpilotBackupBtn->setValue(tr("Compressing backup..."));
-              std::string tarFilePathInProgress = fullBackupPath + "_in_progress.tar.gz";
-              command = "tar -czf " + tarFilePathInProgress + " -C " + inProgressBackupPath + " . && rm -rf " + inProgressBackupPath;
-              result = std::system(command.c_str());
-
-              if (result == 0) {
-                std::string tarFilePath = fullBackupPath + ".tar.gz";
-                command = "mv " + tarFilePathInProgress + " " + tarFilePath;
-                result = std::system(command.c_str());
-
-                if (result == 0) {
-                  frogpilotBackupBtn->setValue(tr("Success!"));
-                } else {
-                  frogpilotBackupBtn->setValue(tr("Failed..."));
-                  std::system(("rm -f " + tarFilePathInProgress).c_str());
-                }
-              } else {
-                frogpilotBackupBtn->setValue(tr("Failed..."));
-                std::system(("rm -f " + tarFilePathInProgress).c_str());
-                std::system(("rm -rf " + inProgressBackupPath).c_str());
-              }
-            } else {
-              command = "mv " + inProgressBackupPath + " " + fullBackupPath;
-              result = std::system(command.c_str());
-
-              if (result == 0) {
-                frogpilotBackupBtn->setValue(tr("Success!"));
-              } else {
-                frogpilotBackupBtn->setValue(tr("Failed..."));
-                std::system(("rm -rf " + inProgressBackupPath).c_str());
-              }
-            }
-          } else {
-            frogpilotBackupBtn->setValue(tr("Failed..."));
-            std::system(("rm -rf " + inProgressBackupPath).c_str());
-          }
-
-          util::sleep_for(2000);
-          frogpilotBackupBtn->setValue("");
-          frogpilotBackupBtn->setEnabled(true);
-        }).detach();
-      }
-
-    } else if (id == 1) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a backup to delete"), backupNames, "", this);
-      if (!selection.isEmpty()) {
-        if (ConfirmationDialog::confirm(tr("Are you sure you want to delete this backup?"), tr("Delete"), this)) {
-          std::thread([=]() {
-            frogpilotBackupBtn->setEnabled(false);
-            frogpilotBackupBtn->setValue(tr("Deleting..."));
-
-            QDir dirToDelete(backupDir.absoluteFilePath(selection));
-            if (selection.endsWith(".tar.gz")) {
-              frogpilotBackupBtn->setValue(QFile::remove(dirToDelete.absolutePath()) ? tr("Deleted!") : tr("Failed..."));
-            } else {
-              frogpilotBackupBtn->setValue(dirToDelete.removeRecursively() ? tr("Deleted!") : tr("Failed..."));
-            }
-
-            util::sleep_for(2000);
-            frogpilotBackupBtn->setValue("");
-            frogpilotBackupBtn->setEnabled(true);
-          }).detach();
-        }
-      }
-
-    } else if (id == 2) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a restore point"), backupNames, "", this);
-      if (!selection.isEmpty()) {
-        if (ConfirmationDialog::confirm(tr("Are you sure you want to restore this version of FrogPilot?"), tr("Restore"), this)) {
-          std::thread([=]() {
-            frogpilotBackupBtn->setEnabled(false);
-            frogpilotBackupBtn->setValue(tr("Restoring..."));
-
-            std::string sourcePath = backupDir.absolutePath().toStdString() + "/" + selection.toStdString();
-            std::string targetPath = "/data/safe_staging/finalized";
-            std::string consistentFilePath = targetPath + "/.overlay_consistent";
-            std::string extractDirectory = "/data/restore_temp";
-
-            if (selection.endsWith(".tar.gz")) {
-              frogpilotBackupBtn->setValue(tr("Extracting..."));
-
-              if (std::system(("mkdir -p " + extractDirectory).c_str()) != 0) {
-                frogpilotBackupBtn->setValue(tr("Failed..."));
-                util::sleep_for(2000);
-                frogpilotBackupBtn->setValue("");
-                frogpilotBackupBtn->setEnabled(true);
-                return;
-              }
-
-              if (std::system(("tar --strip-components=1 -xzf " + sourcePath + " -C " + extractDirectory).c_str()) != 0) {
-                frogpilotBackupBtn->setValue(tr("Failed..."));
-                util::sleep_for(2000);
-                frogpilotBackupBtn->setValue("");
-                frogpilotBackupBtn->setEnabled(true);
-                return;
-              }
-
-              sourcePath = extractDirectory;
-              frogpilotBackupBtn->setValue(tr("Restoring..."));
-            }
-
-            if (std::system(("rsync -av --delete -l --exclude='.overlay_consistent' " + sourcePath + "/ " + targetPath + "/").c_str()) == 0) {
-              std::ofstream consistentFile(consistentFilePath);
-              if (consistentFile) {
-                frogpilotBackupBtn->setValue(tr("Restored!"));
-                params.putBool("AutomaticUpdates", false);
-                util::sleep_for(2000);
-
-                frogpilotBackupBtn->setValue(tr("Rebooting..."));
-                consistentFile.close();
-                std::filesystem::remove_all(extractDirectory);
-                util::sleep_for(2000);
-
-                Hardware::reboot();
-              } else {
-                frogpilotBackupBtn->setValue(tr("Failed..."));
-                util::sleep_for(2000);
-                frogpilotBackupBtn->setValue("");
-                frogpilotBackupBtn->setEnabled(true);
-              }
-            } else {
-              frogpilotBackupBtn->setValue(tr("Failed..."));
-              util::sleep_for(2000);
-              frogpilotBackupBtn->setValue("");
-              frogpilotBackupBtn->setEnabled(true);
-            }
-          }).detach();
-        }
-      }
-    }
-  });
-  addItem(frogpilotBackupBtn);
-
-  // Backup toggles
-  FrogPilotButtonsControl *toggleBackupBtn = new FrogPilotButtonsControl(tr("Toggle Backups"), {tr("BACKUP"), tr("DELETE"), tr("RESTORE")}, tr("Backup, delete, or restore your toggle backups."));
-  connect(toggleBackupBtn, &FrogPilotButtonsControl::buttonClicked, [=](int id) {
-    QDir backupDir("/data/toggle_backups");
-    QStringList backupNames = backupDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-
-    if (id == 0) {
-      QString nameSelection = InputDialog::getText(tr("Name your backup"), this, "", false, 1);
-      if (!nameSelection.isEmpty()) {
-        std::thread([=]() {
-          toggleBackupBtn->setEnabled(false);
-          toggleBackupBtn->setValue(tr("Backing up..."));
-
-          std::string fullBackupPath = backupDir.absolutePath().toStdString() + "/" + nameSelection.toStdString() + "/";
-          std::string command = "mkdir -p " + fullBackupPath + " && rsync -av /data/params/d/ " + fullBackupPath;
-
-          int result = std::system(command.c_str());
-          toggleBackupBtn->setValue(result == 0 ? tr("Success!") : tr("Failed..."));
-
-          util::sleep_for(2000);
-          toggleBackupBtn->setValue("");
-          toggleBackupBtn->setEnabled(true);
-        }).detach();
-      }
-
-    } else if (id == 1) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a backup to delete"), backupNames, "", this);
-      if (!selection.isEmpty()) {
-        if (ConfirmationDialog::confirm(tr("Are you sure you want to delete this backup?"), tr("Delete"), this)) {
-          std::thread([=]() {
-            toggleBackupBtn->setEnabled(false);
-            toggleBackupBtn->setValue(tr("Deleting..."));
-
-            QDir dirToDelete(backupDir.absoluteFilePath(selection));
-
-            toggleBackupBtn->setValue(dirToDelete.removeRecursively() ? tr("Deleted!") : tr("Failed..."));
-
-            util::sleep_for(2000);
-            toggleBackupBtn->setValue("");
-            toggleBackupBtn->setEnabled(true);
-          }).detach();
-        }
-      }
-
-    } else if (id == 2) {
-      QString selection = MultiOptionDialog::getSelection(tr("Select a restore point"), backupNames, "", this);
-      if (!selection.isEmpty()) {
-        if (ConfirmationDialog::confirm(tr("Are you sure you want to restore this toggle backup?"), tr("Restore"), this)) {
-          std::thread([=]() {
-            toggleBackupBtn->setEnabled(false);
-
-            std::string targetPath = "/data/params/d/";
-            std::string tempBackupPath = "/data/params/d_backup/";
-
-            std::string backupCommand = "rsync -av --delete -l " + targetPath + " " + tempBackupPath;
-            int backupResult = std::system(backupCommand.c_str());
-
-            if (backupResult == 0) {
-              toggleBackupBtn->setValue(tr("Restoring..."));
-
-              std::string sourcePath = backupDir.absolutePath().toStdString() + "/" + selection.toStdString() + "/";
-              std::string restoreCommand = "rsync -av --delete -l " + sourcePath + " " + targetPath;
-
-              int restoreResult = std::system(restoreCommand.c_str());
-
-              if (restoreResult == 0) {
-                toggleBackupBtn->setValue(tr("Success!"));
-                updateFrogPilotToggles();
-                std::system(("rm -rf " + tempBackupPath).c_str());
-              } else {
-                toggleBackupBtn->setValue(tr("Failed..."));
-                std::system(("rsync -av --delete -l " + tempBackupPath + " " + targetPath).c_str());
-              }
-            } else {
-              toggleBackupBtn->setValue(tr("Failed..."));
-            }
-
-            util::sleep_for(2000);
-            toggleBackupBtn->setValue("");
-            toggleBackupBtn->setEnabled(true);
-          }).detach();
-        }
-      }
-    }
-  });
-  addItem(toggleBackupBtn);
-
-  // Panda flashing
-  ButtonControl *flashPandaBtn = new ButtonControl(tr("Flash Panda"), tr("FLASH"), tr("Use this button to troubleshoot and update the Panda device's firmware."));
-  connect(flashPandaBtn, &ButtonControl::clicked, [=]() {
-    if (ConfirmationDialog::confirm(tr("Are you sure you want to flash the Panda?"), tr("Flash"), this)) {
-      std::thread([=]() {
-        flashPandaBtn->setEnabled(false);
-        flashPandaBtn->setValue(tr("Flashing..."));
-
-        QProcess recoverProcess;
-        recoverProcess.setWorkingDirectory("/data/openpilot/panda/board");
-        recoverProcess.start("/bin/sh", QStringList{"-c", "./recover.py"});
-        if (!recoverProcess.waitForFinished()) {
-          flashPandaBtn->setValue(tr("Recovery Failed..."));
-          flashPandaBtn->setEnabled(true);
-          return;
-        }
-
-        QProcess flashProcess;
-        flashProcess.setWorkingDirectory("/data/openpilot/panda/board");
-        flashProcess.start("/bin/sh", QStringList{"-c", "./flash.py"});
-        if (!flashProcess.waitForFinished()) {
-          flashPandaBtn->setValue(tr("Flash Failed..."));
-          flashPandaBtn->setEnabled(true);
-          return;
-        }
-
-        flashPandaBtn->setValue(tr("Flashed!"));
-        util::sleep_for(2000);
-        flashPandaBtn->setValue(tr("Rebooting..."));
-        util::sleep_for(2000);
-        Hardware::reboot();
-      }).detach();
-    }
-  });
-  addItem(flashPandaBtn);
-
-  // Reset toggles to default
-  ButtonControl *resetTogglesBtn = new ButtonControl(tr("Reset Toggles To Default"), tr("RESET"), tr("Reset your toggle settings back to their default settings."));
-  connect(resetTogglesBtn, &ButtonControl::clicked, [=]() {
-    if (ConfirmationDialog::confirm(tr("Are you sure you want to completely reset all of your toggle settings?"), tr("Reset"), this)) {
-      std::thread([&] {
-        resetTogglesBtn->setEnabled(false);
-        resetTogglesBtn->setValue(tr("Resetting toggles..."));
-
-        std::system("rm -rf /persist/params");
-        params.putBool("DoToggleReset", true);
-
-        resetTogglesBtn->setValue(tr("Reset!"));
-        util::sleep_for(2000);
-        resetTogglesBtn->setValue(tr("Rebooting..."));
-        util::sleep_for(2000);
-        Hardware::reboot();
-      }).detach();
-    }
-  });
-  addItem(resetTogglesBtn);
-
-  // Force offroad/onroad
-  forceStartedBtn = new FrogPilotButtonsControl(tr("Force Started State"), {tr("OFFROAD"), tr("ONROAD"), tr("OFF")}, tr("Force openpilot either offroad or onroad."), true);
-  connect(forceStartedBtn, &FrogPilotButtonsControl::buttonClicked, [=](int id) {
-    if (id == 0) {
-      paramsMemory.putBool("ForceOffroad", true);
-      paramsMemory.putBool("ForceOnroad", false);
-    } else if (id == 1) {
-      paramsMemory.putBool("ForceOffroad", false);
-      paramsMemory.putBool("ForceOnroad", true);
-    } else if (id == 2) {
-      paramsMemory.putBool("ForceOffroad", false);
-      paramsMemory.putBool("ForceOnroad", false);
-    }
-    forceStartedBtn->setCheckedButton(id);
-  });
-  forceStartedBtn->setCheckedButton(2);
-  addItem(forceStartedBtn);
 
   // power buttons
   QHBoxLayout *power_layout = new QHBoxLayout();
@@ -810,18 +402,17 @@ void DevicePanel::poweroff() {
 void DevicePanel::showEvent(QShowEvent *event) {
   pair_device->setVisible(uiState()->primeType() == PrimeType::UNPAIRED);
   ListWidget::showEvent(event);
-
-  resetCalibBtn->setVisible(!params.getBool("ModelManagement"));
 }
 
 void SettingsWindow::hideEvent(QHideEvent *event) {
-  closeParentToggle();
+  closePanel();
+  closeSubPanel();
 
-  parentToggleOpen = false;
-  subParentToggleOpen = false;
-  subSubParentToggleOpen = false;
+  panelOpen = false;
+  subPanelOpen = false;
+  subSubPanelOpen = false;
 
-  previousScrollPosition = 0;
+  updateFrogPilotToggles();
 }
 
 void SettingsWindow::showEvent(QShowEvent *event) {
@@ -860,15 +451,18 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
   sidebar_layout->addSpacing(10);
   sidebar_layout->addWidget(close_btn, 0, Qt::AlignRight);
   QObject::connect(close_btn, &QPushButton::clicked, [this]() {
-    if (subSubParentToggleOpen) {
-      closeSubSubParentToggle();
-      subSubParentToggleOpen = false;
-    } else if (subParentToggleOpen) {
-      closeSubParentToggle();
-      subParentToggleOpen = false;
-    } else if (parentToggleOpen) {
-      closeParentToggle();
-      parentToggleOpen = false;
+    if (subSubPanelOpen) {
+      closeSubSubPanel();
+
+      subSubPanelOpen = false;
+    } else if (subPanelOpen) {
+      closeSubPanel();
+
+      subPanelOpen = false;
+    } else if (panelOpen) {
+      closePanel();
+
+      panelOpen = false;
     } else {
       closeSettings();
     }
@@ -881,26 +475,21 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
 
   TogglesPanel *toggles = new TogglesPanel(this);
   QObject::connect(this, &SettingsWindow::expandToggleDescription, toggles, &TogglesPanel::expandToggleDescription);
+
+  // FrogPilot panels
   QObject::connect(toggles, &TogglesPanel::updateMetric, this, &SettingsWindow::updateMetric);
 
-  FrogPilotControlsPanel *frogpilotControls = new FrogPilotControlsPanel(this);
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::openParentToggle, this, [this]() {parentToggleOpen=true;});
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::openSubParentToggle, this, [this]() {subParentToggleOpen=true;});
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::openSubSubParentToggle, this, [this]() {subSubParentToggleOpen=true;});
-
-  FrogPilotVisualsPanel *frogpilotVisuals = new FrogPilotVisualsPanel(this);
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::openParentToggle, this, [this]() {parentToggleOpen=true;});
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::openSubParentToggle, this, [this]() {subParentToggleOpen=true;});
+  FrogPilotSettingsWindow *frogpilotSettingsWindow = new FrogPilotSettingsWindow(this);
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openPanel, [this]() {panelOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openSubPanel, [this]() {subPanelOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openSubSubPanel, [this]() {subSubPanelOpen=true;});
 
   QList<QPair<QString, QWidget *>> panels = {
     {tr("Device"), device},
     {tr("Network"), new Networking(this)},
     {tr("Toggles"), toggles},
     {tr("Software"), new SoftwarePanel(this)},
-    {tr("Driving"), frogpilotControls},
-    {tr("Navigation"), new FrogPilotNavigationPanel(this)},
-    {tr("Vehicles"), new FrogPilotVehiclesPanel(this)},
-    {tr("Visuals"), frogpilotVisuals},
+    {tr("FrogPilot"), frogpilotSettingsWindow},
   };
 
   nav_btns = new QButtonGroup(this);
@@ -933,25 +522,63 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
     ScrollView *panel_frame = new ScrollView(panel, this);
     panel_widget->addWidget(panel_frame);
 
-    if (name == tr("Driving") || name == tr("Visuals")) {
-      QScrollBar *scrollbar = panel_frame->verticalScrollBar();
-
-      QObject::connect(scrollbar, &QScrollBar::valueChanged, this, [this](int value) {
-        if (!parentToggleOpen) {
-          previousScrollPosition = value;
-        }
-      });
-
-      QObject::connect(scrollbar, &QScrollBar::rangeChanged, this, [this, panel_frame]() {
-        if (!parentToggleOpen) {
-          panel_frame->restorePosition(previousScrollPosition);
-        }
-      });
-    }
-
     QObject::connect(btn, &QPushButton::clicked, [=, w = panel_frame]() {
-      closeParentToggle();
-      previousScrollPosition = 0;
+      if (w->widget() == frogpilotSettingsWindow) {
+        bool tuningLevelConfirmed = params.getBool("TuningLevelConfirmed");
+
+        if (!tuningLevelConfirmed) {
+          int frogpilotHours = QJsonDocument::fromJson(QString::fromStdString(params.get("FrogPilotStats")).toUtf8()).object().value("FrogPilotSeconds").toInt() / (60 * 60);
+          int openpilotHours = params.getInt("KonikMinutes") / 60 + params.getInt("openpilotMinutes") / 60;
+
+          if (frogpilotHours < 1 && openpilotHours < 100) {
+            if (openpilotHours < 10) {
+              if (ConfirmationDialog::alert(tr("Welcome to FrogPilot! Since you're new to openpilot, the \"Minimal\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 0);
+              }
+            } else {
+              if (ConfirmationDialog::alert(tr("Welcome to FrogPilot! Since you're new to FrogPilot, the \"Minimal\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 0);
+              }
+            }
+          } else if (frogpilotHours < 50 && openpilotHours < 100) {
+            if (ConfirmationDialog::alert(tr("Since you're fairly new to FrogPilot, the \"Minimal\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+              params.putBool("TuningLevelConfirmed", true);
+              params.putInt("TuningLevel", 0);
+            }
+          } else if (frogpilotHours < 100) {
+            if (openpilotHours >= 100) {
+              if (ConfirmationDialog::alert(tr("Since you're experienced with openpilot, the \"Standard\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 1);
+              }
+            } else {
+              if (ConfirmationDialog::alert(tr("Since you're experienced with FrogPilot, the \"Standard\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 1);
+              }
+            }
+          } else if (frogpilotHours >= 100) {
+            if (ConfirmationDialog::alert(tr("Since you're very experienced with FrogPilot, the \"Advanced\" toggle preset has been applied, but you can change this at any time via the \"Tuning Level\" button!"), this, true)) {
+              params.putBool("TuningLevelConfirmed", true);
+              params.putInt("TuningLevel", 2);
+            }
+          }
+          updateTuningLevel();
+        }
+      }
+
+      if (panelOpen) {
+        closePanel();
+
+        panelOpen = false;
+      }
+      if (subPanelOpen) {
+        closeSubPanel();
+
+        subPanelOpen = false;
+      }
       btn->setChecked(true);
       panel_widget->setCurrentWidget(w);
     });

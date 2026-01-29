@@ -11,12 +11,6 @@ cdef extern from "common/params.h":
     CLEAR_ON_ONROAD_TRANSITION
     CLEAR_ON_OFFROAD_TRANSITION
     DEVELOPMENT_ONLY
-    FROGPILOT_CONTROLS
-    FROGPILOT_OTHER
-    FROGPILOT_STORAGE
-    FROGPILOT_TRACKING
-    FROGPILOT_VEHICLES
-    FROGPILOT_VISUALS
     ALL
 
   cdef cppclass c_Params "Params":
@@ -38,7 +32,6 @@ cdef extern from "common/params.h":
     string getParamPath(string) nogil
     void clearAll(ParamKeyType)
     vector[string] allKeys()
-    ParamKeyType getKeyType(string) nogil
 
 
 def ensure_bytes(v):
@@ -163,7 +156,3 @@ cdef class Params:
 
   def all_keys(self):
     return self.p.allKeys()
-
-  def get_key_type(self, key):
-    cdef string k = self.check_key(key)
-    return self.p.getKeyType(k)

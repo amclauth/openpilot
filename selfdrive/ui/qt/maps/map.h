@@ -80,9 +80,7 @@ private:
   uint64_t route_rcv_frame = 0;
 
   // FrogPilot variables
-  Params params;
-
-  int previous_map_style;
+  void updateFavoritesMarkers();
 
   uint64_t model_rcv_frame = 0;
 

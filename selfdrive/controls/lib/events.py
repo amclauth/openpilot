@@ -4,8 +4,9 @@ import math
 import os
 from enum import IntEnum
 from collections.abc import Callable
+from types import SimpleNamespace
 
-from cereal import log, car
+from cereal import log, car, custom
 import cereal.messaging as messaging
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.git import get_short_branch
@@ -15,9 +16,12 @@ from openpilot.selfdrive.locationd.calibrationd import MIN_SPEED_FILTER
 
 AlertSize = log.ControlsState.AlertSize
 AlertStatus = log.ControlsState.AlertStatus
+FrogPilotAlertStatus = custom.FrogPilotControlsState.AlertStatus
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 AudibleAlert = car.CarControl.HUDControl.AudibleAlert
+FrogPilotAudibleAlert = custom.FrogPilotCarControl.HUDControl.AudibleAlert
 EventName = car.CarEvent.EventName
+FrogPilotEventName = custom.FrogPilotCarEvent.EventName
 
 
 # Alert priorities
@@ -46,13 +50,17 @@ class ET:
 
 # get event name from enum
 EVENT_NAME = {v: k for k, v in EventName.schema.enumerants.items()}
+FROGPILOT_EVENT_NAME = {v: k for k, v in FrogPilotEventName.schema.enumerants.items()}
 
 
 class Events:
-  def __init__(self):
+  def __init__(self, frogpilot=False):
     self.events: list[int] = []
     self.static_events: list[int] = []
-    self.event_counters = dict.fromkeys(EVENTS.keys(), 0)
+    self.event_counters = dict.fromkeys((FROGPILOT_EVENTS if frogpilot else EVENTS).keys(), 0)
+
+    # FrogPilot variables
+    self.frogpilot = frogpilot
 
   @property
   def names(self) -> list[int]:
@@ -71,7 +79,7 @@ class Events:
     self.events = self.static_events.copy()
 
   def contains(self, event_type: str) -> bool:
-    return any(event_type in EVENTS.get(e, {}) for e in self.events)
+    return any(event_type in (FROGPILOT_EVENTS if self.frogpilot else EVENTS).get(e, {}) for e in self.events)
 
   def create_alerts(self, event_types: list[str], callback_args=None):
     if callback_args is None:
@@ -79,15 +87,15 @@ class Events:
 
     ret = []
     for e in self.events:
-      types = EVENTS[e].keys()
+      types = (FROGPILOT_EVENTS if self.frogpilot else EVENTS)[e].keys()
       for et in event_types:
         if et in types:
-          alert = EVENTS[e][et]
+          alert = (FROGPILOT_EVENTS if self.frogpilot else EVENTS)[e][et]
           if not isinstance(alert, Alert):
             alert = alert(*callback_args)
 
           if DT_CTRL * (self.event_counters[e] + 1) >= alert.creation_delay:
-            alert.alert_type = f"{EVENT_NAME[e]}/{et}"
+            alert.alert_type = f"{(FROGPILOT_EVENT_NAME if self.frogpilot else EVENT_NAME)[e]}/{et}"
             alert.event_type = et
             ret.append(alert)
     return ret
@@ -99,9 +107,9 @@ class Events:
   def to_msg(self):
     ret = []
     for event_name in self.events:
-      event = car.CarEvent.new_message()
+      event = (custom.FrogPilotCarEvent if self.frogpilot else car.CarEvent).new_message()
       event.name = event_name
-      for event_type in EVENTS.get(event_name, {}):
+      for event_type in (FROGPILOT_EVENTS if self.frogpilot else EVENTS).get(event_name, {}):
         setattr(event, event_type, True)
       ret.append(event)
     return ret
@@ -212,33 +220,31 @@ AlertCallbackType = Callable[[car.CarParams, car.CarState, messaging.SubMaster, 
 
 
 def soft_disable_alert(alert_text_2: str) -> AlertCallbackType:
-  def func(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
+  def func(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
     if soft_disable_time < int(0.5 / DT_CTRL):
       return ImmediateDisableAlert(alert_text_2)
     return SoftDisableAlert(alert_text_2)
   return func
 
 def user_soft_disable_alert(alert_text_2: str) -> AlertCallbackType:
-  def func(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
+  def func(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
     if soft_disable_time < int(0.5 / DT_CTRL):
       return ImmediateDisableAlert(alert_text_2)
     return UserSoftDisableAlert(alert_text_2)
   return func
 
-def startup_master_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  params = Params()
-
+def startup_master_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
   branch = get_short_branch()  # Ensure get_short_branch is cached to avoid lags on startup
   if "REPLAY" in os.environ:
     branch = "replay"
 
-  return StartupAlert(params.get("StartupMessageTop", encoding='utf-8'), params.get("StartupMessageBottom", encoding='utf-8'), alert_status=AlertStatus.frogpilot)
+  return StartupAlert("WARNING: This branch is not tested", branch, alert_status=AlertStatus.userPrompt)
 
-def below_engage_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
+def below_engage_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
   return NoEntryAlert(f"Drive above {get_display_speed(CP.minEnableSpeed, metric)} to engage")
 
 
-def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
+def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
   return Alert(
     f"Steer Unavailable Below {get_display_speed(CP.minSteerSpeed, metric)}",
     "",
@@ -246,7 +252,7 @@ def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
     Priority.LOW, VisualAlert.steerRequired, AudibleAlert.prompt, 0.4)
 
 
-def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
+def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
   first_word = 'Recalibration' if sm['liveCalibration'].calStatus == log.LiveCalibrationData.Status.recalibrating else 'Calibration'
   return Alert(
     f"{first_word} in Progress: {sm['liveCalibration'].calPerc:.0f}%",
@@ -255,9 +261,137 @@ def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messag
     Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
 
 
-def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  model_name = Params().get("NNFFModelName", encoding='utf-8')
-  if model_name == "":
+# *** debug alerts ***
+
+def out_of_space_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  full_perc = round(100. - sm['deviceState'].freeSpacePercent)
+  return NormalPermanentAlert("Out of Storage", f"{full_perc}% full")
+
+
+def posenet_invalid_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  mdl = sm['modelV2'].velocity.x[0] if len(sm['modelV2'].velocity.x) else math.nan
+  err = CS.vEgo - mdl
+  msg = f"Speed Error: {err:.1f} m/s"
+  return NoEntryAlert(msg, alert_text_1="Posenet Speed Invalid")
+
+
+def process_not_running_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  not_running = [p.name for p in sm['managerState'].processes if not p.running and p.shouldBeRunning]
+  msg = ', '.join(not_running)
+  return NoEntryAlert(msg, alert_text_1="Process Not Running")
+
+
+def comm_issue_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  bs = [s for s in sm.data.keys() if not sm.all_checks([s, ])]
+  msg = ', '.join(bs[:4])  # can't fit too many on one line
+  return NoEntryAlert(msg, alert_text_1="Communication Issue Between Processes")
+
+
+def camera_malfunction_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  all_cams = ('roadCameraState', 'driverCameraState', 'wideRoadCameraState')
+  bad_cams = [s.replace('State', '') for s in all_cams if s in sm.data.keys() and not sm.all_checks([s, ])]
+  return NormalPermanentAlert("Camera Malfunction", ', '.join(bad_cams))
+
+
+def calibration_invalid_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  rpy = sm['liveCalibration'].rpyCalib
+  yaw = math.degrees(rpy[2] if len(rpy) == 3 else math.nan)
+  pitch = math.degrees(rpy[1] if len(rpy) == 3 else math.nan)
+  angles = f"Remount Device (Pitch: {pitch:.1f}°, Yaw: {yaw:.1f}°)"
+  return NormalPermanentAlert("Calibration Invalid", angles)
+
+
+def overheat_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  cpu = max(sm['deviceState'].cpuTempC, default=0.)
+  gpu = max(sm['deviceState'].gpuTempC, default=0.)
+  temp = max((cpu, gpu, sm['deviceState'].memoryTempC))
+  return NormalPermanentAlert("System Overheated", f"{temp:.0f} °C")
+
+
+def low_memory_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  return NormalPermanentAlert("Low Memory", f"{sm['deviceState'].memoryUsagePercent}% used")
+
+
+def high_cpu_usage_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  x = max(sm['deviceState'].cpuUsagePercent, default=0.)
+  return NormalPermanentAlert("High CPU Usage", f"{x}% used")
+
+
+def modeld_lagging_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  return NormalPermanentAlert("Driving Model Lagging", f"{sm['modelV2'].frameDropPerc:.1f}% frames dropped")
+
+
+def wrong_car_mode_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  if frogpilot_toggles.has_cc_long:
+    text = "Enable Cruise Control to Engage"
+  elif CP.carName == "honda":
+    text = "Enable Main Switch to Engage"
+  else:
+    text = "Enable Adaptive Cruise to Engage"
+  return NoEntryAlert(text)
+
+
+def joystick_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  axes = sm['testJoystick'].axes
+  gb, steer = list(axes)[:2] if len(axes) else (0., 0.)
+  vals = f"Gas: {round(gb * 100.)}%, Steer: {round(steer * 100.)}%"
+  return NormalPermanentAlert("Joystick Mode", vals)
+
+
+# FrogPilot alerts
+def custom_startup_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  return StartupAlert(frogpilot_toggles.startup_alert_top, frogpilot_toggles.startup_alert_bottom, alert_status=FrogPilotAlertStatus.frogpilot)
+
+
+def forcing_stop_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  model_length = sm["frogpilotPlan"].forcingStopLength
+  model_length_msg = f"{model_length:.1f} meters" if metric else f"{model_length * CV.METER_TO_FOOT:.1f} feet"
+
+  return Alert(
+    f"Forcing the car to stop in {model_length_msg}",
+    "Press the gas pedal or 'Resume' button to override",
+    FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+    Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.)
+
+
+def holiday_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  holiday_messages = {
+    "new_years": "Happy New Year! 🎉",
+    "valentines": "Happy Valentine's Day! ❤️",
+    "st_patricks": "Happy St. Patrick's Day! 🍀",
+    "world_frog_day": "Happy World Frog Day! 🐸",
+    "april_fools": "Happy April Fool's Day! 🤡",
+    "easter_week": "Happy Easter! 🐰",
+    "may_the_fourth": "May the 4th be with you! 🚀",
+    "cinco_de_mayo": "¡Feliz Cinco de Mayo! 🌮",
+    "stitch_day": "Happy Stitch Day! 💙",
+    "fourth_of_july": "Happy Fourth of July! 🎆",
+    "halloween_week": "Happy Halloween! 🎃",
+    "thanksgiving_week": "Happy Thanksgiving! 🦃",
+    "christmas_week": "Merry Christmas! 🎄",
+  }
+
+  return Alert(
+    holiday_messages.get(frogpilot_toggles.current_holiday_theme),
+    "",
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOWEST, VisualAlert.none, FrogPilotAudibleAlert.startup, 5.)
+
+
+def no_lane_available_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  lane_width = sm["frogpilotPlan"].laneWidthLeft if CS.leftBlinker else sm["frogpilotPlan"].laneWidthRight
+  lane_width_msg = f"{lane_width:.1f} meters" if metric else f"{lane_width * CV.METER_TO_FOOT:.1f} feet"
+
+  return Alert(
+    "No lane available",
+    f"Detected lane width is only {lane_width_msg}",
+    AlertStatus.normal, AlertSize.mid,
+    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
+
+
+def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+  model_name = Params().get("NNFFModelName", encoding="utf-8")
+  if model_name is None:
     return Alert(
       "NNFF Torque Controller not available",
       "Donate logs to Twilsonco to get your car supported!",
@@ -267,117 +401,9 @@ def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
     return Alert(
       "NNFF Torque Controller loaded",
       model_name,
-      AlertStatus.frogpilot, AlertSize.mid,
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
       Priority.LOW, VisualAlert.none, AudibleAlert.engage, 5.0)
 
-# *** debug alerts ***
-
-def out_of_space_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  full_perc = round(100. - sm['deviceState'].freeSpacePercent)
-  return NormalPermanentAlert("Out of Storage", f"{full_perc}% full")
-
-
-def posenet_invalid_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  mdl = sm['modelV2'].velocity.x[0] if len(sm['modelV2'].velocity.x) else math.nan
-  err = CS.vEgo - mdl
-  msg = f"Speed Error: {err:.1f} m/s"
-  return NoEntryAlert(msg, alert_text_1="Posenet Speed Invalid")
-
-
-def process_not_running_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  not_running = [p.name for p in sm['managerState'].processes if not p.running and p.shouldBeRunning]
-  msg = ', '.join(not_running)
-  return NoEntryAlert(msg, alert_text_1="Process Not Running")
-
-
-def comm_issue_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  bs = [s for s in sm.data.keys() if not sm.all_checks([s, ])]
-  msg = ', '.join(bs[:4])  # can't fit too many on one line
-  return NoEntryAlert(msg, alert_text_1="Communication Issue Between Processes")
-
-
-def camera_malfunction_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  all_cams = ('roadCameraState', 'driverCameraState', 'wideRoadCameraState')
-  bad_cams = [s.replace('State', '') for s in all_cams if s in sm.data.keys() and not sm.all_checks([s, ])]
-  return NormalPermanentAlert("Camera Malfunction", ', '.join(bad_cams))
-
-
-def calibration_invalid_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  rpy = sm['liveCalibration'].rpyCalib
-  yaw = math.degrees(rpy[2] if len(rpy) == 3 else math.nan)
-  pitch = math.degrees(rpy[1] if len(rpy) == 3 else math.nan)
-  angles = f"Remount Device (Pitch: {pitch:.1f}°, Yaw: {yaw:.1f}°)"
-  return NormalPermanentAlert("Calibration Invalid", angles)
-
-
-def overheat_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  cpu = max(sm['deviceState'].cpuTempC, default=0.)
-  gpu = max(sm['deviceState'].gpuTempC, default=0.)
-  temp = max((cpu, gpu, sm['deviceState'].memoryTempC))
-  return NormalPermanentAlert("System Overheated", f"{temp:.0f} °C")
-
-
-def low_memory_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  return NormalPermanentAlert("Low Memory", f"{sm['deviceState'].memoryUsagePercent}% used")
-
-
-def high_cpu_usage_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  x = max(sm['deviceState'].cpuUsagePercent, default=0.)
-  return NormalPermanentAlert("High CPU Usage", f"{x}% used")
-
-
-def modeld_lagging_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  return NormalPermanentAlert("Driving Model Lagging", f"{sm['modelV2'].frameDropPerc:.1f}% frames dropped")
-
-
-def wrong_car_mode_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  text = "Enable Adaptive Cruise to Engage"
-  if CP.carName == "honda":
-    text = "Enable Main Switch to Engage"
-  return NoEntryAlert(text)
-
-
-def joystick_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  axes = sm['testJoystick'].axes
-  gb, steer = list(axes)[:2] if len(axes) else (0., 0.)
-  vals = f"Gas: {round(gb * 100.)}%, Steer: {round(steer * 100.)}%"
-  return NormalPermanentAlert("Joystick Mode", vals)
-
-
-# FrogPilot Alerts
-def holiday_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  holiday_messages = {
-    "new_years": ("Happy New Year! 🎉", "newYearsDayAlert"),
-    "valentines": ("Happy Valentine's Day! ❤️", "valentinesDayAlert"),
-    "st_patricks": ("Happy St. Patrick's Day! 🍀", "stPatricksDayAlert"),
-    "world_frog_day": ("Happy World Frog Day! 🐸", "worldFrogDayAlert"),
-    "april_fools": ("Happy April Fool's Day! 🤡", "aprilFoolsAlert"),
-    "easter_week": ("Happy Easter! 🐰", "easterAlert"),
-    "cinco_de_mayo": ("¡Feliz Cinco de Mayo! 🌮", "cincoDeMayoAlert"),
-    "fourth_of_july": ("Happy Fourth of July! 🎆", "fourthOfJulyAlert"),
-    "halloween_week": ("Happy Halloween! 🎃", "halloweenAlert"),
-    "thanksgiving_week": ("Happy Thanksgiving! 🦃", "thanksgivingAlert"),
-    "christmas_week": ("Merry Christmas! 🎄", "christmasAlert")
-  }
-
-  holiday_name = Params().get("CurrentHolidayTheme", encoding='utf-8')
-  message, alert_type = holiday_messages.get(holiday_name, ("", ""))
-
-  return Alert(
-    message,
-    "",
-    AlertStatus.normal, AlertSize.small,
-    Priority.LOWEST, VisualAlert.none, AudibleAlert.engage, 5.)
-
-def no_lane_available_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
-  lane_width = sm['frogpilotPlan'].laneWidthLeft if CS.leftBlinker else sm['frogpilotPlan'].laneWidthRight
-  lane_width_msg = f"{lane_width:.1f} meters" if metric else f"{lane_width * CV.METER_TO_FOOT:.1f} feet"
-
-  return Alert(
-    "No lane available",
-    f"Detected lane width is only {lane_width_msg}",
-    AlertStatus.normal, AlertSize.mid,
-    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
 
 EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   # ********** events with no alerts **********
@@ -419,6 +445,12 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.PERMANENT: StartupAlert("Car Unrecognized",
                                "Check comma power connections",
                                alert_status=AlertStatus.userPrompt),
+  },
+
+  EventName.startupNoSecOcKey: {
+    ET.PERMANENT: NormalPermanentAlert("Dashcam Mode",
+                                       "Security Key Not Available",
+                                       priority=Priority.HIGH),
   },
 
   EventName.dashcamMode: {
@@ -1003,69 +1035,80 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.PERMANENT: NormalPermanentAlert("Vehicle Sensors Calibrating", "Drive to Calibrate"),
     ET.NO_ENTRY: NoEntryAlert("Vehicle Sensors Calibrating"),
   },
+}
 
-  # FrogPilot Events
-  EventName.blockUser: {
-    ET.NO_ENTRY: NoEntryAlert("Please don't use the 'Development' branch!"),
-  },
-
-  EventName.forcingStop: {
-    ET.WARNING: Alert(
-      "Forcing the car to stop",
-      "Press the gas pedal or 'Resume' button to override",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.),
-  },
-
-  EventName.goatSteerSaturated: {
-    ET.WARNING: Alert(
-      "Turn exceeds steering limit",
-      "JESUS TAKE THE WHEEL!!",
+FROGPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
+  FrogPilotEventName.blockUser: {
+    ET.PERMANENT: Alert(
+      "Don't use the 'Development' branch!",
+      "Forcing you into 'Dashcam Mode' for your safety",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.LOW, VisualAlert.steerRequired, AudibleAlert.goat, 2.),
+      Priority.HIGHEST, VisualAlert.none, AudibleAlert.none, 1.),
   },
 
-  EventName.greenLight: {
+  FrogPilotEventName.customStartupAlert: {
+    ET.PERMANENT: custom_startup_alert,
+  },
+
+  FrogPilotEventName.forcingStop: {
+    ET.WARNING: forcing_stop_alert,
+  },
+
+  FrogPilotEventName.goatSteerSaturated: {
+    ET.WARNING: Alert(
+      "JESUS TAKE THE WHEEL!!",
+      "Turn Exceeds Steering Limit",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.steerRequired, FrogPilotAudibleAlert.goat, 2.),
+  },
+
+  FrogPilotEventName.greenLight: {
     ET.PERMANENT: Alert(
       "Light turned green",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
-  EventName.holidayActive: {
+  FrogPilotEventName.holidayActive: {
     ET.PERMANENT: holiday_alert,
   },
 
-  EventName.laneChangeBlockedLoud: {
+  FrogPilotEventName.laneChangeBlockedLoud: {
     ET.WARNING: Alert(
-      "Car detected in blindspot",
+      "Car Detected in Blindspot",
       "",
       AlertStatus.userPrompt, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.warningSoft, .1),
   },
 
-  EventName.leadDeparting: {
+  FrogPilotEventName.leadDeparting: {
     ET.PERMANENT: Alert(
       "Lead departed",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
-  EventName.noLaneAvailable: {
-    ET.PERMANENT: no_lane_available_alert,
+  FrogPilotEventName.noLaneAvailable: {
+    ET.WARNING: no_lane_available_alert,
   },
 
-  EventName.openpilotCrashed: {
-    ET.PERMANENT: Alert(
+  FrogPilotEventName.openpilotCrashed: {
+    ET.IMMEDIATE_DISABLE: Alert(
       "openpilot crashed",
       "Please post the 'Error Log' in the FrogPilot Discord!",
-      AlertStatus.normal, AlertSize.mid,
-      Priority.HIGH, VisualAlert.none, AudibleAlert.none, 10.),
+      AlertStatus.critical, AlertSize.mid,
+      Priority.HIGHEST, VisualAlert.none, AudibleAlert.prompt, .1),
+
+    ET.NO_ENTRY: Alert(
+      "openpilot crashed",
+      "Please post the 'Error Log' in the FrogPilot Discord!",
+      AlertStatus.critical, AlertSize.mid,
+      Priority.HIGHEST, VisualAlert.none, AudibleAlert.prompt, .1),
   },
 
-  EventName.pedalInterceptorNoBrake: {
+  FrogPilotEventName.pedalInterceptorNoBrake: {
     ET.WARNING: Alert(
       "Braking Unavailable",
       "Shift to L",
@@ -1073,35 +1116,43 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.HIGH, VisualAlert.wrongGear, AudibleAlert.promptRepeat, 4.),
   },
 
-  EventName.speedLimitChanged: {
+  FrogPilotEventName.speedLimitChanged: {
     ET.PERMANENT: Alert(
       "Speed limit changed",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
-  EventName.torqueNNLoad: {
+  FrogPilotEventName.thisIsFineSteerSaturated: {
+    ET.WARNING: Alert(
+      "This is fine ☕",
+      "Turn Exceeds Steering Limit",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.steerRequired, FrogPilotAudibleAlert.thisIsFine, 2.),
+  },
+
+  FrogPilotEventName.torqueNNLoad: {
     ET.PERMANENT: torque_nn_load_alert,
   },
 
-  EventName.trafficModeActive: {
-    ET.PERMANENT: Alert(
+  FrogPilotEventName.trafficModeActive: {
+    ET.WARNING: Alert(
       "Traffic Mode enabled",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
-  EventName.trafficModeInactive: {
-    ET.PERMANENT: Alert(
+  FrogPilotEventName.trafficModeInactive: {
+    ET.WARNING: Alert(
       "Traffic Mode Disabled",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
-  EventName.turningLeft: {
+  FrogPilotEventName.turningLeft: {
     ET.WARNING: Alert(
       "Turning left",
       "",
@@ -1109,7 +1160,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1, alert_rate=0.75),
   },
 
-  EventName.turningRight: {
+  FrogPilotEventName.turningRight: {
     ET.WARNING: Alert(
       "Turning right",
       "",
@@ -1118,79 +1169,100 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   # Random Events
-  EventName.accel30: {
+  FrogPilotEventName.accel30: {
     ET.WARNING: Alert(
       "UwU u went a bit fast there!",
       "(⁄ ⁄•⁄ω⁄•⁄ ⁄)",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.uwu, 4.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.uwu, 4.),
   },
 
-  EventName.accel35: {
+  FrogPilotEventName.accel35: {
     ET.WARNING: Alert(
       "I ain't giving you no tree-fiddy",
       "You damn Loch Ness Monsta!",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.nessie, 4.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.nessie, 4.),
   },
 
-  EventName.accel40: {
+  FrogPilotEventName.accel40: {
     ET.WARNING: Alert(
       "Great Scott!",
       "🚗💨",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.doc, 4.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.doc, 4.),
   },
 
-  EventName.dejaVuCurve: {
-    ET.WARNING: Alert(
+  FrogPilotEventName.dejaVuCurve: {
+    ET.PERMANENT: Alert(
       "♬♪ Deja vu! ᕕ(⌐■_■)ᕗ ♪♬",
       "🏎️",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.dejaVu, 4.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.dejaVu, 4.),
   },
 
-  EventName.firefoxSteerSaturated: {
+  FrogPilotEventName.firefoxSteerSaturated: {
     ET.WARNING: Alert(
-      "Turn Exceeds Steering Limit",
       "IE Has Stopped Responding...",
+      "Turn Exceeds Steering Limit",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.LOW, VisualAlert.steerRequired, AudibleAlert.firefox, 4.),
+      Priority.LOW, VisualAlert.steerRequired, FrogPilotAudibleAlert.firefox, 4.),
   },
 
-  EventName.hal9000: {
+  FrogPilotEventName.hal9000: {
     ET.WARNING: Alert(
       "I'm sorry Dave",
       "I'm afraid I can't do that...",
       AlertStatus.normal, AlertSize.mid,
-      Priority.HIGH, VisualAlert.none, AudibleAlert.hal9000, 4.),
+      Priority.HIGH, VisualAlert.none, FrogPilotAudibleAlert.hal9000, 4.),
   },
 
-  EventName.openpilotCrashedRandomEvent: {
-    ET.PERMANENT: Alert(
+  FrogPilotEventName.openpilotCrashedRandomEvent: {
+    ET.IMMEDIATE_DISABLE: Alert(
       "openpilot crashed 💩",
       "Please post the 'Error Log' in the FrogPilot Discord!",
       AlertStatus.normal, AlertSize.mid,
-      Priority.HIGHEST, VisualAlert.none, AudibleAlert.fart, 10.),
+      Priority.HIGHEST, VisualAlert.none, FrogPilotAudibleAlert.fart, 10.),
+
+    ET.NO_ENTRY: Alert(
+      "openpilot crashed 💩",
+      "Please post the 'Error Log' in the FrogPilot Discord!",
+      AlertStatus.normal, AlertSize.mid,
+      Priority.HIGHEST, VisualAlert.none, FrogPilotAudibleAlert.fart, 10.),
   },
 
-  EventName.vCruise69: {
+  FrogPilotEventName.toBeContinued: {
     ET.PERMANENT: Alert(
+      "To be continued...",
+      "⬅️",
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.MID, VisualAlert.none, FrogPilotAudibleAlert.continued, 7.),
+  },
+
+  FrogPilotEventName.vCruise69: {
+    ET.WARNING: Alert(
       "Lol 69",
       "",
-      AlertStatus.frogpilot, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlert.noice, 2.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.noice, 2.),
   },
 
-  EventName.yourFrogTriedToKillMe: {
+  FrogPilotEventName.yourFrogTriedToKillMe: {
     ET.PERMANENT: Alert(
       "Your Frog tried to kill me...",
       "👺",
-      AlertStatus.frogpilot, AlertSize.mid,
-      Priority.MID, VisualAlert.none, AudibleAlert.angry, 5.),
+      FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+      Priority.MID, VisualAlert.none, FrogPilotAudibleAlert.angry, 5.),
+  },
+
+  FrogPilotEventName.youveGotMail: {
+    ET.WARNING: Alert(
+      "You've got mail! 📧",
+      "",
+      FrogPilotAlertStatus.frogpilot, AlertSize.small,
+      Priority.LOW, VisualAlert.none, FrogPilotAudibleAlert.mail, 3.),
   },
 }
-
 
 if __name__ == '__main__':
   # print all alerts by type and priority

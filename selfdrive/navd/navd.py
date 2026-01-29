@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import math
 import os
@@ -18,7 +19,7 @@ from openpilot.selfdrive.navd.helpers import (Coordinate, coordinate_from_param,
                                     parse_banner_instructions)
 from openpilot.common.swaglog import cloudlog
 
-from openpilot.selfdrive.frogpilot.controls.lib.frogpilot_variables import FrogPilotVariables
+from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles
 
 REROUTE_DISTANCE = 25
 MANEUVER_TRANSITION_THRESHOLD = 10
@@ -57,25 +58,20 @@ class RouteEngine:
     if "MAPBOX_TOKEN" in os.environ:
       self.mapbox_token = os.environ["MAPBOX_TOKEN"]
       self.mapbox_host = "https://api.mapbox.com"
-    elif not FrogPilotVariables.has_prime:
+    else:
       self.mapbox_token = self.params.get("MapboxSecretKey", encoding='utf8')
       self.mapbox_host = "https://api.mapbox.com"
-    else:
-      self.api = Api(self.params.get("DongleId", encoding='utf8'))
-      self.mapbox_host = os.getenv('MAPS_HOST', 'https://maps.comma.ai')
 
     # FrogPilot variables
-    self.frogpilot_toggles = FrogPilotVariables.toggles
-    FrogPilotVariables.update_frogpilot_params()
+    self.approaching_intersection = False
+    self.approaching_turn = False
+
+    self.nav_speed_limit = 0
 
     self.stop_coord = []
     self.stop_signal = []
 
-    self.approaching_intersection = False
-    self.approaching_turn = False
-    self.update_toggles = False
-
-    self.nav_speed_limit = 0
+    self.frogpilot_toggles = get_frogpilot_toggles()
 
   def update(self):
     self.sm.update(0)
@@ -95,12 +91,9 @@ class RouteEngine:
     except Exception:
       cloudlog.exception("navd.failed_to_compute")
 
-    # Update FrogPilot parameters
-    if FrogPilotVariables.toggles_updated:
-      self.update_toggles = True
-    elif self.update_toggles:
-      FrogPilotVariables.update_frogpilot_params()
-      self.update_toggles = False
+    # Update FrogPilot variables
+    if self.sm['frogpilotPlan'].togglesUpdated:
+      self.frogpilot_toggles = get_frogpilot_toggles()
 
   def update_location(self):
     location = self.sm['liveLocationKalman']
@@ -158,7 +151,7 @@ class RouteEngine:
       'overview': 'full',
       'steps': 'true',
       'banner_instructions': 'true',
-      'alternatives': 'false',
+      'alternatives': 'true',
       'language': lang,
     }
 
@@ -187,6 +180,7 @@ class RouteEngine:
 
       r = resp.json()
       r1 = resp.json()
+      chosen_route = r['routes'][0]
 
       # Function to remove specified keys recursively unnessary for display
       def remove_keys(obj, keys_to_remove):
@@ -207,6 +201,18 @@ class RouteEngine:
         nav_destination_json = self.params.get('NavDestination')
 
         try:
+          route_hash = json.loads(nav_destination_json).get('routeHash')
+        except Exception:
+          route_hash = None
+
+        if route_hash:
+          for cand in r['routes']:
+            flat = ','.join(str(coordinate) for pair in cand['geometry']['coordinates'] for coordinate in pair)
+            if hashlib.sha1(flat.encode()).hexdigest() == route_hash:
+              chosen_route = cand
+              break
+
+        try:
           nav_destination_data = json.loads(nav_destination_json)
           place_name = nav_destination_data.get('place_name', 'Default Place Name')
           first_route['Destination'] = place_name
@@ -223,7 +229,7 @@ class RouteEngine:
         json.dump(self.r3, json_file, indent=4)
 
       if len(r['routes']):
-        self.route = r['routes'][0]['legs'][0]['steps']
+        self.route = chosen_route['legs'][0]['steps']
         self.route_geometry = []
 
         # Iterate through the steps in self.route to find "stop_sign" and "traffic_light"
@@ -238,7 +244,7 @@ class RouteEngine:
                 self.stop_coord.append(Coordinate.from_mapbox_tuple(intersection["location"]))
 
         maxspeed_idx = 0
-        maxspeeds = r['routes'][0]['legs'][0]['annotation']['maxspeed']
+        maxspeeds = chosen_route['legs'][0]['annotation']['maxspeed']
 
         # Convert coordinates
         for step in self.route:
@@ -276,11 +282,14 @@ class RouteEngine:
 
   def send_instruction(self):
     msg = messaging.new_message('navInstruction', valid=True)
+    fp_msg = messaging.new_message('frogpilotNavigation', valid=True)
 
     if self.step_idx is None:
       msg.valid = False
-      self.nav_speed_limit = 0
       self.pm.send('navInstruction', msg)
+
+      fp_msg.frogpilotNavigation.navigationSpeedLimit = 0
+      self.pm.send('frogpilotNavigation', fp_msg)
       return
 
     step = self.route[self.step_idx]
@@ -407,14 +416,11 @@ class RouteEngine:
       self.approaching_intersection = False
       self.approaching_turn = False
 
-    frogpilot_plan_send = messaging.new_message('frogpilotNavigation')
-    frogpilotNavigation = frogpilot_plan_send.frogpilotNavigation
+    fp_msg.frogpilotNavigation.approachingIntersection = self.approaching_intersection
+    fp_msg.frogpilotNavigation.approachingTurn = self.approaching_turn
+    fp_msg.frogpilotNavigation.navigationSpeedLimit = self.nav_speed_limit
 
-    frogpilotNavigation.approachingIntersection = self.approaching_intersection
-    frogpilotNavigation.approachingTurn = self.approaching_turn
-    frogpilotNavigation.navigationSpeedLimit = self.nav_speed_limit
-
-    self.pm.send('frogpilotNavigation', frogpilot_plan_send)
+    self.pm.send('frogpilotNavigation', fp_msg)
 
   def send_route(self):
     coords = []
@@ -467,7 +473,7 @@ class RouteEngine:
 
 def main():
   pm = messaging.PubMaster(['navInstruction', 'navRoute', 'frogpilotNavigation'])
-  sm = messaging.SubMaster(['carState', 'liveLocationKalman', 'managerState'])
+  sm = messaging.SubMaster(['carState', 'liveLocationKalman', 'managerState', 'frogpilotPlan'])
 
   rk = Ratekeeper(1.0)
   route_engine = RouteEngine(sm, pm)

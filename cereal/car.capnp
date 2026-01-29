@@ -84,6 +84,7 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     startup @75;
     startupNoCar @76;
     startupNoControl @77;
+    startupNoSecOcKey @121;
     startupMaster @78;
     startupNoFw @104;
     fcw @79;
@@ -116,33 +117,6 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     paramsdTemporaryError @50;
     paramsdPermanentError @119;
     actuatorsApiUnavailable @120;
-
-    # FrogPilot Events
-    accel30 @121;
-    accel35 @122;
-    accel40 @123;
-    blockUser @124;
-    dejaVuCurve @125;
-    firefoxSteerSaturated @126;
-    forcingStop @127;
-    goatSteerSaturated @128;
-    greenLight @129;
-    hal9000 @130;
-    holidayActive @131;
-    laneChangeBlockedLoud @132;
-    leadDeparting @133;
-    noLaneAvailable @134;
-    openpilotCrashed @135;
-    openpilotCrashedRandomEvent @136;
-    pedalInterceptorNoBrake @137;
-    speedLimitChanged @138;
-    torqueNNLoad @139;
-    trafficModeActive @140;
-    trafficModeInactive @141;
-    turningLeft @142;
-    turningRight @143;
-    vCruise69 @144;
-    yourFrogTriedToKillMe @145;
 
     radarCanErrorDEPRECATED @15;
     communityFeatureDisallowedDEPRECATED @62;
@@ -439,20 +413,6 @@ struct CarControl {
       prompt @6;
       promptRepeat @7;
       promptDistracted @8;
-
-      # Random Events
-      angry @9;
-      dejaVu @10;
-      doc @11;
-      fart @12;
-      firefox @13;
-      hal9000 @14;
-      nessie @15;
-      noice @16;
-      uwu @17;
-
-      # Other
-      goat @18;
     }
   }
 
@@ -544,6 +504,9 @@ struct CarParams {
   networkLocation @50 :NetworkLocation;  # Where Panda/C2 is integrated into the car's CAN network
 
   wheelSpeedFactor @63 :Float32; # Multiplier on wheels speeds to computer actual speeds
+
+  secOcRequired @74 :Bool;  # Car requires SecOC message authentication to operate
+  secOcKeyAvailable @75 :Bool;  # Stored SecOC key loaded from params
 
   struct SafetyConfig {
     safetyModel @0 :SafetyModel;

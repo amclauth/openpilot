@@ -76,8 +76,6 @@ class ManagerProcess(ABC):
   watchdog_seen = False
   shutting_down = False
 
-  started_time = 0
-
   @abstractmethod
   def prepare(self) -> None:
     pass
@@ -90,7 +88,7 @@ class ManagerProcess(ABC):
     self.stop(sig=signal.SIGKILL)
     self.start()
 
-  def check_watchdog(self, started: bool, params: Params) -> None:
+  def check_watchdog(self, started: bool) -> None:
     if self.watchdog_max_dt is None or self.proc is None:
       return
 
@@ -103,12 +101,9 @@ class ManagerProcess(ABC):
       pass
 
     dt = time.monotonic() - self.last_watchdog_time / 1e9
-    self.started_time = (self.started_time + 1) if started else 0
 
     if dt > self.watchdog_max_dt:
       if self.watchdog_seen and ENABLE_WATCHDOG:
-        if self.started_time > 100:
-          sentry.capture_tmux(params)
         cloudlog.error(f"Watchdog timeout for {self.name} (exitcode {self.proc.exitcode}) restarting ({started=})")
         self.restart()
     else:
@@ -243,7 +238,7 @@ class DaemonProcess(ManagerProcess):
     self.params = None
 
   @staticmethod
-  def should_run(started, params, CP):
+  def should_run(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles):
     return True
 
   def prepare(self) -> None:
@@ -279,18 +274,18 @@ class DaemonProcess(ManagerProcess):
 
 
 def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None, CP: car.CarParams=None,
-                   not_run: list[str] | None=None) -> list[ManagerProcess]:
+                   not_run: list[str] | None=None, classic_model=False, tinygrad_model=False, frogpilot_toggles=None) -> list[ManagerProcess]:
   if not_run is None:
     not_run = []
 
   running = []
   for p in procs:
-    if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
+    if p.enabled and p.name not in not_run and p.should_run(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles):
       running.append(p)
     else:
       p.stop(block=False)
 
-    p.check_watchdog(started, params)
+    p.check_watchdog(started)
 
   for p in running:
     p.start()

@@ -2,16 +2,15 @@
 import time
 import json
 import jwt
-import os
-import random, string
+import random
+import string
 from pathlib import Path
 
 from datetime import datetime, timedelta
 from openpilot.common.api import api_get
 from openpilot.common.params import Params
 from openpilot.common.spinner import Spinner
-from openpilot.selfdrive.controls.lib.alertmanager import set_offroad_alert
-from openpilot.system.hardware import HARDWARE, PC
+from openpilot.system.hardware import HARDWARE
 from openpilot.system.hardware.hw import Paths
 from openpilot.common.swaglog import cloudlog
 
@@ -24,21 +23,20 @@ def is_registered_device() -> bool:
   return dongle not in (None, UNREGISTERED_DONGLE_ID)
 
 
-def register(show_spinner=False) -> str | None:
+def register(show_spinner=False, register_konik=False) -> str | None:
   params = Params()
 
   IMEI = params.get("IMEI", encoding='utf8')
   HardwareSerial = params.get("HardwareSerial", encoding='utf8')
   dongle_id: str | None = params.get("DongleId", encoding='utf8')
   needs_registration = None in (IMEI, HardwareSerial, dongle_id)
+  needs_registration |= dongle_id == UNREGISTERED_DONGLE_ID
 
   pubkey = Path(Paths.persist_root()+"/comma/id_rsa.pub")
-  if os.path.isfile("/persist/frogsgomoo.py"):
-    dongle_id = "FrogsGoMoo"
-  elif not pubkey.is_file():
+  if not pubkey.is_file():
     dongle_id = UNREGISTERED_DONGLE_ID
     cloudlog.warning(f"missing public key: {pubkey}")
-  elif needs_registration:
+  elif needs_registration or register_konik:
     if show_spinner:
       spinner = Spinner()
       spinner.update("registering device")
@@ -86,21 +84,17 @@ def register(show_spinner=False) -> str | None:
         cloudlog.exception("failed to authenticate")
         backoff = min(backoff + 1, 15)
         time.sleep(backoff)
-        if backoff >= 5:
-          dongle_id = UNREGISTERED_DONGLE_ID
-          break
 
       if time.monotonic() - start_time > 60 and show_spinner:
-        spinner.update(f"registering device - serial: {serial}, IMEI: ({imei1}, {imei2})")
+        dongle_id = UNREGISTERED_DONGLE_ID
+        break
 
     if show_spinner:
       spinner.close()
 
-  if dongle_id:
+  if not register_konik and dongle_id != params.get("KonikDongleId", encoding="utf8"):
     params.put("DongleId", dongle_id)
-    if params.get_bool("UseFrogServer"):
-      params.put("FrogId", dongle_id)
-    set_offroad_alert("Offroad_UnofficialHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
+    params.put("StockDongleId", dongle_id)
   return dongle_id
 
 

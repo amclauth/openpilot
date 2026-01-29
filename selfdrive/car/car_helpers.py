@@ -1,9 +1,10 @@
 import os
-import threading
 import time
 from collections.abc import Callable
 
-from cereal import car
+import openpilot.system.sentry as sentry
+
+from cereal import car, custom
 from openpilot.common.params import Params
 from openpilot.selfdrive.car.interfaces import get_interface_attr
 from openpilot.selfdrive.car.fingerprints import eliminate_incompatible_cars, all_legacy_fingerprint_cars
@@ -12,20 +13,17 @@ from openpilot.selfdrive.car.fw_versions import get_fw_versions_ordered, get_pre
 from openpilot.selfdrive.car.mock.values import CAR as MOCK
 from openpilot.common.swaglog import cloudlog
 import cereal.messaging as messaging
-import openpilot.system.sentry as sentry
 from openpilot.selfdrive.car import gen_empty_fingerprint
 from openpilot.system.version import get_build_metadata
 
 FRAME_FINGERPRINT = 100  # 1s
 
 EventName = car.CarEvent.EventName
+FrogPilotEventName = custom.FrogPilotCarEvent.EventName
 
 
-def get_startup_event(car_recognized, controller_available, fw_seen, block_user):
-  if block_user:
-    return EventName.blockUser
-  else:
-    event = EventName.startupMaster
+def get_startup_event(car_recognized, controller_available, fw_seen):
+  event = FrogPilotEventName.customStartupAlert
 
   if not car_recognized:
     if fw_seen:
@@ -186,20 +184,17 @@ def fingerprint(logcan, sendcan, num_pandas):
   return car_fingerprint, finger, vin, car_fw, source, exact_match
 
 
-def get_car_interface(CP):
+def get_car_interface(CP, FPCP):
   CarInterface, CarController, CarState = interfaces[CP.carFingerprint]
-  return CarInterface(CP, CarController, CarState)
+  return CarInterface(CP, FPCP, CarController, CarState)
 
 
-def get_car(logcan, sendcan, disable_openpilot_long, experimental_long_allowed, params, num_pandas=1):
-  car_model = params.get("CarModel", encoding='utf-8')
-  force_fingerprint = params.get_bool("ForceFingerprint")
-
+def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, frogpilot_toggles=None):
   candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(logcan, sendcan, num_pandas)
 
-  if candidate is None or force_fingerprint:
-    if car_model is not None:
-      candidate = car_model
+  if candidate is None or frogpilot_toggles.force_fingerprint:
+    if frogpilot_toggles.car_model is not None:
+      candidate = frogpilot_toggles.car_model
     else:
       cloudlog.event("car doesn't match any fingerprints", fingerprints=repr(fingerprints), error=True)
       candidate = "MOCK"
@@ -207,20 +202,19 @@ def get_car(logcan, sendcan, disable_openpilot_long, experimental_long_allowed, 
     params.put_nonblocking("CarMake", candidate.split('_')[0].title())
     params.put_nonblocking("CarModel", candidate)
 
-  if get_build_metadata().channel == "FrogPilot-Development" and params.get("DongleId", encoding='utf-8') != "FrogsGoMoo":
-    candidate = "MOCK"
-    threading.Thread(target=sentry.capture_fingerprint, args=(candidate, params, True,)).start()
-  elif not params.get_bool("FingerprintLogged"):
-    threading.Thread(target=sentry.capture_fingerprint, args=(candidate, params,)).start()
+  if frogpilot_toggles.block_user:
+    candidate = MOCK.MOCK
+    sentry.capture_block()
 
   CarInterface, _, _ = interfaces[candidate]
-  CP = CarInterface.get_params(candidate, fingerprints, car_fw, disable_openpilot_long, experimental_long_allowed, params, docs=False)
+  CP = CarInterface.get_params(candidate, fingerprints, car_fw, experimental_long_allowed, frogpilot_toggles, docs=False)
+  FPCP = CarInterface.get_frogpilot_params(candidate, fingerprints, car_fw, CP, frogpilot_toggles)
   CP.carVin = vin
   CP.carFw = car_fw
   CP.fingerprintSource = source
   CP.fuzzyFingerprint = not exact_match
 
-  return get_car_interface(CP), CP
+  return get_car_interface(CP, FPCP), CP, FPCP
 
 def write_car_param(platform=MOCK.MOCK):
   params = Params()

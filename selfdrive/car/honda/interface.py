@@ -10,8 +10,6 @@ from openpilot.selfdrive.car import create_button_events, get_safety_config
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase
 from openpilot.selfdrive.car.disable_ecu import disable_ecu
 
-from openpilot.selfdrive.frogpilot.controls.lib.frogpilot_variables import get_max_allowed_accel
-
 
 ButtonType = car.CarState.ButtonEvent.Type
 FrogPilotButtonType = custom.FrogPilotCarState.ButtonEvent.Type
@@ -24,17 +22,11 @@ SETTINGS_BUTTONS_DICT = {CruiseSettings.DISTANCE: ButtonType.gapAdjustCruise, Cr
 
 class CarInterface(CarInterfaceBase):
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed, frogpilot_toggles):
+  def get_pid_accel_limits(CP, current_speed, cruise_speed):
     if CP.carFingerprint in HONDA_BOSCH:
-      if frogpilot_toggles.sport_plus:
-        return CarControllerParams.BOSCH_ACCEL_MIN, get_max_allowed_accel(current_speed)
-      else:
-        return CarControllerParams.BOSCH_ACCEL_MIN, CarControllerParams.BOSCH_ACCEL_MAX
+      return CarControllerParams.BOSCH_ACCEL_MIN, CarControllerParams.BOSCH_ACCEL_MAX
     elif CP.enableGasInterceptor:
-      if frogpilot_toggles.sport_plus:
-        return CarControllerParams.NIDEC_ACCEL_MIN, get_max_allowed_accel(current_speed)
-      else:
-        return CarControllerParams.NIDEC_ACCEL_MIN, CarControllerParams.NIDEC_ACCEL_MAX
+      return CarControllerParams.NIDEC_ACCEL_MIN, CarControllerParams.NIDEC_ACCEL_MAX
     else:
       # NIDECs don't allow acceleration near cruise_speed,
       # so limit limits of pid to prevent windup
@@ -43,7 +35,7 @@ class CarInterface(CarInterfaceBase):
       return CarControllerParams.NIDEC_ACCEL_MIN, interp(current_speed, ACCEL_MAX_BP, ACCEL_MAX_VALS)
 
   @staticmethod
-  def _get_params(ret, candidate, fingerprint, car_fw, disable_openpilot_long, experimental_long, docs, params):
+  def _get_params(ret, candidate, fingerprint, car_fw, experimental_long, docs, frogpilot_toggles):
     ret.carName = "honda"
 
     CAN = CanBus(ret, fingerprint)
@@ -60,7 +52,7 @@ class CarInterface(CarInterfaceBase):
     else:
       ret.safetyConfigs = [get_safety_config(car.CarParams.SafetyModel.hondaNidec)]
       ret.enableGasInterceptor = 0x201 in fingerprint[CAN.pt]
-      ret.openpilotLongitudinalControl = not disable_openpilot_long
+      ret.openpilotLongitudinalControl = not frogpilot_toggles.disable_openpilot_long
 
       ret.pcmCruise = not ret.enableGasInterceptor
 
@@ -73,6 +65,12 @@ class CarInterface(CarInterfaceBase):
 
     # Accord ICE 1.5T CVT has different gearbox message
     if candidate == CAR.HONDA_ACCORD and 0x191 in fingerprint[CAN.pt]:
+      ret.transmissionType = TransmissionType.cvt
+    # Civic Type R is missing 0x191 and 0x1A3
+    elif candidate == CAR.HONDA_CIVIC_2022 and all(msg not in fingerprint[CAN.pt] for msg in (0x191, 0x1A3)):
+      ret.transmissionType = TransmissionType.manual
+    # New Civics dont have 0x191, but do have 0x1A3
+    elif candidate == CAR.HONDA_CIVIC_2022 and 0x1A3 in fingerprint[CAN.pt]:
       ret.transmissionType = TransmissionType.cvt
 
     # Certain Hondas have an extra steering sensor at the bottom of the steering rack,
@@ -201,7 +199,6 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.6], [0.18]] # TODO: can probably use some tuning
 
     elif candidate == CAR.HONDA_CLARITY:
-      ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_CLARITY
       if eps_modified:
         for fw in car_fw:
           if fw.ecu == "eps" and b"-" not in fw.fwVersion and b"," in fw.fwVersion:
@@ -232,9 +229,6 @@ class CarInterface(CarInterfaceBase):
 
     if ret.openpilotLongitudinalControl and candidate in HONDA_BOSCH:
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_BOSCH_LONG
-
-    if ret.enableGasInterceptor and candidate not in HONDA_BOSCH:
-      ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_GAS_INTERCEPTOR
 
     if candidate in HONDA_BOSCH_RADARLESS:
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_RADARLESS
