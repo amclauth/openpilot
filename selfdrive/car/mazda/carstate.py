@@ -41,7 +41,7 @@ class CarState(CarStateBase):
     self.update = self.update_gen1
     if CP.flags & MazdaFlags.GEN1:
       self.update = self.update_gen1
-    if CP.flags & (MazdaFlags.GEN2 | MazdaFlags.GEN3):
+    if CP.flags & MazdaFlags.GEN2:
       self.update = self.update_gen2
 
   def update_gen1(self, cp, cp_cam, cp_body, frogpilot_variables):
@@ -204,14 +204,9 @@ class CarState(CarStateBase):
     ret.steerFaultTemporary = False # TODO locate signal. Car shows light on dash if there is a fault
 
     ret.standstill = cp_cam.vl["SPEED"]["SPEED"] * unit_conversion < 0.1
-    if self.CP.flags & MazdaFlags.GEN2:
-      ret.cruiseState.speed = cp.vl["CRUZE_STATE"]["CRZ_SPEED"] * unit_conversion
-      ret.cruiseState.enabled = (cp.vl["CRUZE_STATE"]["CRZ_STATE"] >= 2)
-      ret.cruiseState.available = (cp.vl["CRUZE_STATE"]["CRZ_STATE"] != 0)
-    else:
-      ret.cruiseState.speed = cp_body.vl["CRUZE_STATE"]["CRZ_SPEED"] * unit_conversion
-      ret.cruiseState.enabled = (cp_body.vl["CRUZE_STATE"]["CRZ_STATE"] >= 3)
-      ret.cruiseState.available = (cp_body.vl["CRUZE_STATE"]["CRZ_STATE"] >= 2)
+    ret.cruiseState.speed = cp.vl["CRUZE_STATE"]["CRZ_SPEED"] * unit_conversion
+    ret.cruiseState.enabled = (cp.vl["CRUZE_STATE"]["CRZ_STATE"] >= 2)
+    ret.cruiseState.available = (cp.vl["CRUZE_STATE"]["CRZ_STATE"] != 0)
     ret.steeringAngleDeg = cp.vl["STEER"]["STEER_ANGLE"]
     ret.cruiseState.standstill = ret.standstill if not self.CP.openpilotLongitudinalControl else False
     ret.steeringRateDeg = (ret.steeringAngleDeg - self._prev_steering_angle) / DT_CTRL
@@ -235,7 +230,7 @@ class CarState(CarStateBase):
       messages += [
         ("TI_FEEDBACK", 50),
       ]
-    elif CP.flags & (MazdaFlags.GEN2 | MazdaFlags.GEN3):
+    elif CP.flags & MazdaFlags.GEN2:
       messages += [
         ("EPS_FEEDBACK", 50),
       ]
@@ -326,10 +321,4 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_body_can_parser(CP):
-    messages = CarState.get_ti_messages(CP)
-    if CP.flags & MazdaFlags.GEN3:
-      messages += [
-        ("CRUZE_STATE", 10),
-      ]
-
-    return CANParser(DBC[CP.carFingerprint]["pt"], messages, 1)
+    return CANParser(DBC[CP.carFingerprint]["pt"], CarState.get_ti_messages(CP), 1)

@@ -113,7 +113,7 @@ void AnnotatedCameraWidget::updateState(const UIState &s, const FrogPilotUIState
   }
 
   // FrogPilot variables
-  distance_btn->setEnabled(frogpilot_nvg->dmIconPosition != QPoint(0, 0) && !hideBottomIcons && frogpilot_toggles.value("onroad_distance_button").toBool());
+  distance_btn->setEnabled(frogpilot_nvg->dmIconPosition != QPoint(0, 0) && !hideBottomIcons && frogpilot_toggles.value("onroad_distance_button").toBool() && s.scene.longitudinal_control);
   distance_btn->setVisible(distance_btn->isEnabled());
   if (distance_btn->isEnabled()) {
     distance_btn->move(rightHandDM ? width() - UI_BORDER_SIZE - distance_btn->width() - (UI_BORDER_SIZE / 2) : UI_BORDER_SIZE, frogpilot_nvg->dmIconPosition.y() - distance_btn->height() / 2);
