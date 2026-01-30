@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import json
 import numpy as np
+import os
 import random
+import tomllib
 
 from functools import cache
 from pathlib import Path
@@ -14,7 +16,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.car import gen_empty_fingerprint
 from openpilot.selfdrive.car.car_helpers import interfaces
 from openpilot.selfdrive.car.gm.values import GMFlags
-from openpilot.selfdrive.car.interfaces import CarInterfaceBase
+from openpilot.selfdrive.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase
 from openpilot.selfdrive.car.mock.interface import CarInterface
 from openpilot.selfdrive.car.mock.values import CAR as MOCK
 from openpilot.selfdrive.car.toyota.values import ToyotaFlags, ToyotaFrogPilotFlags
@@ -98,13 +100,28 @@ TINYGRAD_FILES = [
 
 @cache
 def get_nnff_model_files():
-  model_dir = Path(NNFF_MODELS_PATH)
-  return [file.stem for file in model_dir.iterdir() if file.is_file()]
+  return [file.stem for file in NNFF_MODELS_PATH.iterdir() if file.is_file()]
+
+@cache
+def get_nnff_substitutes():
+  substitutes = {}
+  with open(TORQUE_SUBSTITUTE_PATH, "rb") as f:
+    substitutes_data = tomllib.load(f)
+    substitutes = {key: value for key, value in substitutes_data.items()}
+  return substitutes
 
 def nnff_supported(car_fingerprint):
-  for file in get_nnff_model_files():
-    if file.startswith(car_fingerprint):
-      return True
+  model_files = get_nnff_model_files()
+  substitutes = get_nnff_substitutes()
+
+  fingerprints_to_check = [car_fingerprint]
+  if car_fingerprint in substitutes:
+    fingerprints_to_check.append(substitutes[car_fingerprint])
+
+  for fingerprint in fingerprints_to_check:
+    for file in model_files:
+      if file.startswith(fingerprint):
+        return True
 
   return False
 
@@ -535,16 +552,16 @@ class FrogPilotVariables:
       CarInterface, _, _ = interfaces[MOCK.MOCK]
       FPCP = CarInterface.get_frogpilot_params(MOCK.MOCK, gen_empty_fingerprint(), [], CP, toggle)
 
-    is_torque_car = FPCP.lateralTuning.which() == "torque"
+    is_torque_car = CP.lateralTuning.which() == "torque"
     if not is_torque_car:
-      CarInterfaceBase.configure_torque_tune(MOCK.MOCK, FPCP.lateralTuning)
+      CarInterfaceBase.configure_torque_tune(MOCK.MOCK, CP.lateralTuning)
 
     toggle.always_on_lateral_set = bool(CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
     toggle.car_make = CP.carName
     toggle.car_model = CP.carFingerprint
     toggle.disable_openpilot_long = params.get_bool("DisableOpenpilotLongitudinal") if tuning_level >= level["DisableOpenpilotLongitudinal"] else default.get_bool("DisableOpenpilotLongitudinal")
-    friction = FPCP.lateralTuning.torque.friction
-    has_auto_tune = toggle.car_make in {"hyundai", "toyota"} and FPCP.lateralTuning.which() == "torque"
+    friction = CP.lateralTuning.torque.friction
+    has_auto_tune = toggle.car_make in {"hyundai", "toyota"} and CP.lateralTuning.which() == "torque"
     has_bsm = CP.enableBsm
     toggle.has_cc_long = toggle.car_make == "gm" and bool(CP.flags & GMFlags.CC_LONG.value)
     has_nnff = nnff_supported(toggle.car_model)
@@ -553,8 +570,9 @@ class FrogPilotVariables:
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(CP.flags & ToyotaFlags.SMART_DSU.value)
     has_sng = CP.autoResumeSng
     toggle.has_zss = toggle.car_make == "toyota" and bool(FPCP.fpFlags & ToyotaFrogPilotFlags.ZSS.value)
+    honda_nidec = CP.safetyConfigs[0].safetyModel == SafetyModel.hondaNidec
     is_angle_car = CP.steerControlType == car.CarParams.SteerControlType.angle
-    latAccelFactor = FPCP.lateralTuning.torque.latAccelFactor
+    latAccelFactor = CP.lateralTuning.torque.latAccelFactor
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
     toggle.openpilot_longitudinal_active = toggle.openpilot_longitudinal and (
@@ -564,7 +582,7 @@ class FrogPilotVariables:
     startAccel = CP.startAccel
     stopAccel = CP.stopAccel
     steerActuatorDelay = CP.steerActuatorDelay
-    steerKp = FPCP.lateralTuning.torque.kp
+    steerKp = CP.lateralTuning.torque.kp
     steerRatio = CP.steerRatio
     toggle.stoppingDecelRate = CP.stoppingDecelRate
     taco_hacks_allowed = CP.safetyConfigs[0].safetyModel == SafetyModel.hyundaiCanfd
