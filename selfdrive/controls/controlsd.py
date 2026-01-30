@@ -206,6 +206,12 @@ class Controls:
 
     self.frogpilot_toggles = get_frogpilot_toggles()
 
+    # FireTheBabysitter change - suppress commIssue when DM processes disabled
+    self.fire_the_babysitter = self.frogpilot_toggles.fire_the_babysitter
+    if self.fire_the_babysitter:
+      self.sm.ignore_alive.append('driverMonitoringState')
+      self.sm.ignore_average_freq.append('driverMonitoringState')
+
   def set_initial_state(self):
     if REPLAY:
       controls_state = self.params.get("ReplayControlsState")

@@ -25,7 +25,7 @@ private:
 
   std::map<QString, AbstractControl*> toggles;
 
-  QSet<QString> deviceManagementKeys = {"DeviceShutdown", "HigherBitrate", "IncreaseThermalLimits", "LowVoltageShutdown", "NoLogging", "NoUploads", "UseKonikServer"};
+  QSet<QString> deviceManagementKeys = {"DeviceShutdown", "FireTheBabysitter", "HigherBitrate", "IncreaseThermalLimits", "LowVoltageShutdown", "NoLogging", "NoUploads", "UseKonikServer"};  // FireTheBabysitter change - added "FireTheBabysitter" to set
   QSet<QString> screenKeys = {"ScreenBrightness", "ScreenBrightnessOnroad", "ScreenRecorder", "ScreenTimeout", "ScreenTimeoutOnroad", "StandbyMode"};
 
   QSet<QString> parentKeys;
