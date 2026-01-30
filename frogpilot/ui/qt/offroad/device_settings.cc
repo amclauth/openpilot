@@ -36,7 +36,7 @@ FrogPilotDevicePanel::FrogPilotDevicePanel(FrogPilotSettingsWindow *parent) : Fr
     {"DeviceManagement", tr("Device Settings"), tr("<b>Settings that control how the device runs, powers off, and manages driving data.</b>"), "../../frogpilot/assets/toggle_icons/icon_device.png"},
     {"DeviceShutdown", tr("Device Shutdown Timer"), tr("<b>Keep the device on for the set amount of time after a drive</b> before it shuts down automatically."), ""},
     // FireTheBabysitter change
-    {"FireTheBabysitter", tr("Disable Driver Monitoring"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: Driver monitoring will be completely disabled. You are responsible for staying attentive.")).arg(tr("<b>Prevent the driver monitoring system from running.</b> No face tracking, no awareness alerts, no engagement lockouts. Requires reboot.")), ""},
+    {"FireTheBabysitter", tr("Fire the Babysitter"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: Driver monitoring will be completely disabled. You are responsible for staying attentive.")).arg(tr("<b>Prevent the driver monitoring system from running.</b> No face tracking, no awareness alerts, no engagement lockouts. Requires reboot.")), ""},
     {"NoLogging", tr("Disable Logging"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: This will prevent your drives from being recorded and all data will be unobtainable!")).arg(tr("<b>Prevent the device from saving driving data.</b>")), ""},
     {"NoUploads", tr("Disable Uploads"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: This will prevent your drives from being uploaded to <b>comma connect</b> which will impact debugging and official support from comma!")).arg(tr("<b>Prevent the device from uploading driving data.</b>")), ""},
     {"HigherBitrate", tr("High-Quality Recording"), tr("<b>Save drive footage in higher video quality.</b>"), ""},
@@ -173,7 +173,7 @@ FrogPilotDevicePanel::FrogPilotDevicePanel(FrogPilotSettingsWindow *parent) : Fr
     QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, this, &FrogPilotDevicePanel::updateToggles);
   }
 
-  QSet<QString> rebootKeys = {"HigherBitrate", "UseKonikServer"};
+  QSet<QString> rebootKeys = {"FireTheBabysitter", "HigherBitrate", "UseKonikServer"};  // FireTheBabysitter change - added to reboot set
   for (const QString &key : rebootKeys) {
     QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, [key, this](bool state) {
       QString filePath;
