@@ -588,7 +588,27 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
     }
   }
 
-  // DMoji
+  // Always compute dmIconPosition so compass/CEM/distance widgets position correctly
+  if (!hideBottomIcons) {
+    int offset = UI_BORDER_SIZE + btn_size / 2;
+    int x = rightHandDM ? width() - offset : offset;
+    if (distance_btn->isEnabled()) {
+      if (rightHandDM) {
+        x -= UI_BORDER_SIZE + distance_btn->width() + UI_BORDER_SIZE;
+      } else {
+        x += UI_BORDER_SIZE + distance_btn->width() + UI_BORDER_SIZE;
+      }
+    }
+    int pos_offset = offset;
+    if (frogpilot_toggles.value("road_name_ui").toBool()) {
+      pos_offset += UI_BORDER_SIZE;
+    }
+    int y = height() - pos_offset;
+    frogpilot_nvg->dmIconPosition.setX(x);
+    frogpilot_nvg->dmIconPosition.setY(y);
+  }
+
+  // DMoji - only draw face/arcs when DM data is available
   if (!hideBottomIcons && (sm.rcv_frame("driverStateV2") > s->scene.started_frame)) {
     update_dmonitoring(s, sm["driverStateV2"].getDriverStateV2(), dm_fade_state, rightHandDM);
     drawDriverState(painter, s, frogpilot_toggles);
