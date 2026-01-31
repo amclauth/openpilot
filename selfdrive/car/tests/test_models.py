@@ -206,7 +206,7 @@ class TestCarModelBase(unittest.TestCase):
       if tuning == 'pid':
         self.assertTrue(len(self.CP.lateralTuning.pid.kpV))
       elif tuning == 'torque':
-        self.assertTrue(self.CP.lateralTuning.torque.kf > 0)
+        self.assertTrue(self.CP.lateralTuning.torque.kp > 0)
       else:
         raise Exception("unknown tuning")
 

@@ -89,7 +89,7 @@ class TestCarInterfaces:
         assert len(tune.pid.kiV) > 0 and len(tune.pid.kiV) == len(tune.pid.kiBP)
 
       elif tune.which() == 'torque':
-        assert not math.isnan(tune.torque.kf) and tune.torque.kf > 0
+        assert not math.isnan(tune.torque.friction) and tune.torque.kp > 0
         assert not math.isnan(tune.torque.friction) and tune.torque.friction > 0
 
     cc_msg = FuzzyGenerator.get_random_msg(data.draw, car.CarControl, real_floats=True)
