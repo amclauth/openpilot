@@ -306,14 +306,18 @@ std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> 
       panda->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT);
     }
 
-    bool power_save_desired = !ignition_local;
-    if (health.power_save_enabled_pkt != power_save_desired) {
-      panda->set_power_saving(power_save_desired);
+    // Power saving disables CAN transceivers and interrupts, so keep it OFF
+    // to allow offroad OBD-II diagnostic queries via ELM327 safety mode.
+    // TODO: after DTC scan feature is proven, gate this with a param so power
+    // saving re-enables after the scan completes (saves ~50mA idle draw)
+    if (health.power_save_enabled_pkt) {
+      panda->set_power_saving(false);
     }
 
-    // set safety mode to NO_OUTPUT when car is off. ELM327 is an alternative if we want to leverage athenad/connect
-    if (!ignition_local && (health.safety_mode_pkt != (uint8_t)(cereal::CarParams::SafetyModel::NO_OUTPUT))) {
-      panda->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT);
+    // When car is off, use ELM327 with OBD multiplexing (param=0 routes bus 1
+    // to the OBD-II port) instead of NO_OUTPUT which blocks all CAN TX.
+    if (!ignition_local && (health.safety_mode_pkt != (uint8_t)(cereal::CarParams::SafetyModel::ELM327))) {
+      panda->set_safety_model(cereal::CarParams::SafetyModel::ELM327, 0U);
     }
 
     if (!panda->comms_healthy()) {

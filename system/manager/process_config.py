@@ -47,6 +47,13 @@ def only_onroad(started: bool, params, CP: car.CarParams, classic_model, tinygra
 def only_offroad(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return not started
 
+def dtc_scan(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
+  if started:
+    return False
+  if not params.get_bool("DtcScanEnabled"):
+    return False
+  return not params.get_bool("DtcScanComplete")
+
 # FrogPilot functions
 def allow_logging(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return not frogpilot_toggles.no_logging and logging(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles)
@@ -116,6 +123,7 @@ procs = [
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
 
   # FrogPilot processes
+  PythonProcess("dtc_scannerd", "frogpilot.system.dtc_scannerd", dtc_scan),
   NativeProcess("classic_modeld", "frogpilot/classic_modeld", ["./classic_modeld"], run_classic_modeld),
   PythonProcess("frogpilot_process", "frogpilot.frogpilot_process", always_run),
   PythonProcess("mapd", "frogpilot.navigation.mapd", always_run),
