@@ -116,6 +116,13 @@ def fingerprint(logcan, sendcan, num_pandas):
   ecu_rx_addrs = set()
   params = Params()
 
+  # Skip FW query for known cars (queries fail anyway on some vehicles like CX-30 GEN2)
+  if not skip_fw_query:
+    known_car = params.get("CarModel", encoding="utf-8")
+    if known_car and known_car not in ("", "mock", "MOCK"):
+      cloudlog.warning("Skipping FW query - car already known: %s", known_car)
+      skip_fw_query = True
+
   start_time = time.monotonic()
   if not skip_fw_query:
     cached_params = params.get("CarParamsCache")

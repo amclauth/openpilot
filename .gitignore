@@ -79,6 +79,7 @@ frogpilot/tinygrad_modeld/models/*.pkl
 *moc_*
 frogpilot/tinygrad_modeld/models/commonmodel_pyx.cpp
 build/
+claude_*
 
 !**/.gitkeep
 
