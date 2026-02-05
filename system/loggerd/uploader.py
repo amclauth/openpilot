@@ -91,6 +91,13 @@ class Uploader:
     self.immediate_folders = ["crash/", "boot/"]
     self.immediate_priority = {"qlog": 0, "qlog.bz2": 0, "qcamera.ts": 1}
 
+    self.custom_server = self.params.get(
+      "CustomUploadServer", encoding="utf8"
+    )
+    self.custom_token = self.params.get(
+      "CustomUploadToken", encoding="utf8"
+    )
+
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes", encoding="utf8")
     requested_routes = [] if r is None else r.split(",")
@@ -133,10 +140,18 @@ class Uploader:
   def next_file_to_upload(self, metered: bool) -> tuple[str, str, str] | None:
     upload_files = list(self.list_upload_files(metered))
 
+    # Always prioritize crash/boot logs
     for name, key, fn in upload_files:
       if any(f in fn for f in self.immediate_folders):
         return name, key, fn
 
+    if self.custom_server:
+      # Custom server: upload all remaining files
+      for name, key, fn in upload_files:
+        return name, key, fn
+      return None
+
+    # Comma/Konik: only upload priority files
     for name, key, fn in upload_files:
       if name in self.immediate_priority:
         return name, key, fn
@@ -144,6 +159,16 @@ class Uploader:
     return None
 
   def do_upload(self, key: str, fn: str):
+    if self.custom_server:
+      url = f"{self.custom_server.rstrip('/')}/{key}"
+      headers = {}
+      if self.custom_token:
+        headers["Authorization"] = f"Bearer {self.custom_token}"
+      cloudlog.debug("custom_upload %s -> %s", fn, url)
+      with open(fn, "rb") as f:
+        return requests.put(url, data=f, headers=headers, timeout=10)
+
+    # Comma/Konik presigned URL flow
     url_resp = self.api.get("v1.4/" + self.dongle_id + "/upload_url/", timeout=10, path=key, access_token=self.api.get_token())
     if url_resp.status_code == 412:
       return url_resp
@@ -178,7 +203,7 @@ class Uploader:
     if sz == 0:
       # tag files of 0 size as uploaded
       success = True
-    elif name in MAX_UPLOAD_SIZES and sz > MAX_UPLOAD_SIZES[name]:
+    elif not self.custom_server and name in MAX_UPLOAD_SIZES and sz > MAX_UPLOAD_SIZES[name]:
       cloudlog.event("uploader_too_large", key=key, fn=fn, sz=sz)
       success = True
     else:
@@ -224,8 +249,10 @@ class Uploader:
     name, key, fn = d
 
     # qlogs and bootlogs need to be compressed before uploading
-    if key.endswith(('qlog', 'rlog')) or (key.startswith('boot/') and not key.endswith('.bz2')):
-      key += ".bz2"
+    # (skip compression for custom server -- send raw)
+    if not self.custom_server:
+      if key.endswith(('qlog', 'rlog')) or (key.startswith('boot/') and not key.endswith('.bz2')):
+        key += ".bz2"
 
     return self.upload(name, key, fn, network_type, metered)
 
@@ -267,19 +294,32 @@ def main(exit_event: threading.Event = None) -> None:
       continue
 
     success = uploader.step(sm['deviceState'].networkType.raw, sm['deviceState'].networkMetered)
-    if success is None:
-      backoff = 60 if offroad else 5
-    elif success:
-      backoff = 0.1
+    if uploader.custom_server:
+      # Custom server: fixed 5-minute poll on failure/idle, fast retry on success
+      if success:
+        backoff = 0.1
+      else:
+        backoff = 5 * 60
     else:
-      cloudlog.info("upload backoff %r", backoff)
-      backoff = min(backoff*2, 120)
+      if success is None:
+        backoff = 60 if offroad else 5
+      elif success:
+        backoff = 0.1
+      else:
+        cloudlog.info("upload backoff %r", backoff)
+        backoff = min(backoff*2, 120)
     if allow_sleep:
       time.sleep(backoff + random.uniform(0, backoff))
 
     # Update FrogPilot variables
     if sm['frogpilotPlan'].togglesUpdated:
       frogpilot_toggles = get_frogpilot_toggles()
+      uploader.custom_server = params.get(
+        "CustomUploadServer", encoding="utf8"
+      )
+      uploader.custom_token = params.get(
+        "CustomUploadToken", encoding="utf8"
+      )
 
 if __name__ == "__main__":
   main()
