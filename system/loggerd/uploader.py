@@ -26,6 +26,7 @@ from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles
 NetworkType = log.DeviceState.NetworkType
 UPLOAD_ATTR_NAME = 'user.upload'
 UPLOAD_ATTR_VALUE = b'1'
+CURSOR_FILENAME = "_upload_cursor"
 
 MAX_UPLOAD_SIZES = {
   "qlog": 25*1e6,  # can't be too restrictive here since we use qlogs to find
@@ -98,11 +99,55 @@ class Uploader:
       "CustomUploadToken", encoding="utf8"
     )
 
+  def _read_cursor(self) -> str | None:
+    """Read the upload cursor (last fully-uploaded segment dir name)."""
+    try:
+      path = os.path.join(self.root, CURSOR_FILENAME)
+      with open(path) as f:
+        value = f.read().strip()
+      return value if value else None
+    except OSError:
+      return None
+
+  def _write_cursor(self, dirname: str) -> None:
+    """Atomically write the upload cursor."""
+    path = os.path.join(self.root, CURSOR_FILENAME)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+      f.write(dirname)
+    os.replace(tmp, path)
+
+  def _is_dir_fully_uploaded(self, path: str) -> bool:
+    """Check if all files in a segment directory have upload xattr."""
+    try:
+      names = os.listdir(path)
+    except OSError:
+      return False
+    if not names:
+      return False
+    for name in names:
+      fn = os.path.join(path, name)
+      if os.path.isfile(fn):
+        try:
+          if getxattr(fn, UPLOAD_ATTR_NAME) != UPLOAD_ATTR_VALUE:
+            return False
+        except OSError:
+          return False
+    return True
+
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes", encoding="utf8")
     requested_routes = [] if r is None else r.split(",")
 
+    cursor = self._read_cursor() if self.custom_server else None
+    cursor_sort = get_directory_sort(cursor) if cursor else None
+
     for logdir in listdir_by_creation(self.root):
+      # Skip already-uploaded dirs that sort at or before the cursor
+      if cursor_sort and logdir[0:1].isdigit():
+        if get_directory_sort(logdir) <= cursor_sort:
+          continue
+
       path = os.path.join(self.root, logdir)
       try:
         names = os.listdir(path)
@@ -164,6 +209,18 @@ class Uploader:
       headers = {}
       if self.custom_token:
         headers["Authorization"] = f"Bearer {self.custom_token}"
+
+      # Send directory creation time for segment dirs so the server
+      # can use date-based folder names
+      logdir = key.split("/")[0]
+      if logdir[0:1].isdigit():
+        segment_dir = os.path.join(self.root, logdir)
+        try:
+          ctime = int(os.path.getctime(segment_dir))
+          headers["X-Drive-Time"] = str(ctime)
+        except OSError:
+          pass
+
       cloudlog.debug("custom_upload %s -> %s", fn, url)
       with open(fn, "rb") as f:
         return requests.put(url, data=f, headers=headers, timeout=10)
@@ -200,6 +257,7 @@ class Uploader:
 
     cloudlog.event("upload_start", key=key, fn=fn, sz=sz, network_type=network_type, metered=metered)
 
+    last_exc = None
     if sz == 0:
       # tag files of 0 size as uploaded
       success = True
@@ -237,6 +295,17 @@ class Uploader:
         setxattr(fn, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
       except OSError:
         cloudlog.event("uploader_setxattr_failed", exc=last_exc, key=key, fn=fn, sz=sz)
+
+      # advance cursor if this segment dir is fully uploaded
+      if self.custom_server:
+        logdir = key.split("/")[0]
+        if logdir[0:1].isdigit():
+          dir_path = os.path.join(self.root, logdir)
+          if self._is_dir_fully_uploaded(dir_path):
+            cursor = self._read_cursor()
+            cursor_sort = get_directory_sort(cursor) if cursor else None
+            if not cursor_sort or get_directory_sort(logdir) > cursor_sort:
+              self._write_cursor(logdir)
 
     return success
 
