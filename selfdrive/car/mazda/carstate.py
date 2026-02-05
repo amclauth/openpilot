@@ -332,7 +332,6 @@ class CarState(CarStateBase):
     if CP.flags & MazdaFlags.GEN2:
       messages += [
         ("STEER_TORQUE", 100),
-        ("CAM_Start", 10),
       ]
 
     return CANParser(DBC[CP.carFingerprint]["pt"], messages, 2)
