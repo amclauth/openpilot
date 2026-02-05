@@ -634,7 +634,7 @@ BO_ 1868 EPS_FEEDBACK3: 8 XXX
  SG_ OUT4 : 55|16@0- (-1,0) [0|65535] "" XXX
 
 CM_ SG_ 31 GEAR "13-P, 12-R, 11-N, 1-6-D";
-CM_ SG_ 546 LEAD_PROXIMITY "MRCC radar lead proximity. Active even with ACC off. Higher=closer. Baseline ~39500 (no target), ~41100 (close follow). ACCEL_CMD=1712 and NEW_SIGNAL_1=0 are sentinels when ACC off.";
+CM_ SG_ 546 LEAD_PROXIMITY "MRCC radar ACC control output. Represents acceleration margin - higher values mean safe to accelerate, lower values mean braking needed. Best correlation (r=-0.84) with required deceleration: PROX_offset = -433*req_decel + 653, where req_decel = (v_ego^2 - v_lead^2)/(2*d). Baseline ~39500 (no target), peak ~41100 (close following). Values cluster at ~250 intervals (39500, 40000, 40250, 41000). Active even with ACC off. ACCEL_CMD=1712 and NEW_SIGNAL_1=0 are sentinels when ACC off.";
 VAL_ 31 GEAR 13 "P" 12 "R" 11 "N" 1 "D" 2 "D" 3 "D" 4 "D" 5 "D" 6 "D";
 VAL_ 537 GEAR 0 "P" 1 "D" 2 "R";
 VAL_ 552 GEAR 13 "P" 12 "R" 11 "N" 1 "D" 2 "D" 3 "D" 4 "D" 5 "D" 6 "D";
