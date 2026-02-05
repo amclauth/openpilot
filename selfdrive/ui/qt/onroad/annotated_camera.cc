@@ -120,7 +120,7 @@ void AnnotatedCameraWidget::updateState(const UIState &s, const FrogPilotUIState
     distance_btn->updateState(s.scene, fs.frogpilot_scene);
   }
   experimental_btn->setVisible(!frogpilot_nvg->bigMapOpen &&
-    (s.scene.longitudinal_control || frogpilot_toggles.value("rotating_wheel").toBool()));
+    (frogpilot_toggles.value("openpilot_longitudinal_active").toBool() || frogpilot_toggles.value("rotating_wheel").toBool()));
   screen_recorder->setVisible(frogpilot_nvg->standstillDuration == 0 && !fs.frogpilot_scene.map_open && !(frogpilot_nvg->signalStyle == "static" && car_state.getRightBlinker()) && frogpilot_toggles.value("screen_recorder").toBool());
 
   frogpilot_nvg->updateState(fs, frogpilot_toggles);
