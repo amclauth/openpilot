@@ -494,7 +494,7 @@ BO_ 546 ACC_2: 8 XXX
  SG_ CTR : 7|4@0+ (1,0) [0|15] "" XXX
  SG_ ACC_ENABLED : 18|1@0+ (1,0) [0|255] "" XXX
  SG_ BRAKE_RELATED : 20|1@0+ (1,0) [0|15] "" XXX
- SG_ NEW_SIGNAL_2 : 31|16@0+ (1,0) [0|255] "" XXX
+ SG_ LEAD_PROXIMITY : 31|16@0+ (1,0) [0|65535] "" XXX
  SG_ NEW_SIGNAL_1 : 47|16@0+ (1,0) [0|65535] "" XXX
  SG_ CHKSUM : 63|8@0+ (1,0) [0|15] "" XXX
 
@@ -634,6 +634,7 @@ BO_ 1868 EPS_FEEDBACK3: 8 XXX
  SG_ OUT4 : 55|16@0- (-1,0) [0|65535] "" XXX
 
 CM_ SG_ 31 GEAR "13-P, 12-R, 11-N, 1-6-D";
+CM_ SG_ 546 LEAD_PROXIMITY "MRCC radar lead proximity. Active even with ACC off. Higher=closer. Baseline ~39500 (no target), ~41100 (close follow). ACCEL_CMD=1712 and NEW_SIGNAL_1=0 are sentinels when ACC off.";
 VAL_ 31 GEAR 13 "P" 12 "R" 11 "N" 1 "D" 2 "D" 3 "D" 4 "D" 5 "D" 6 "D";
 VAL_ 537 GEAR 0 "P" 1 "D" 2 "R";
 VAL_ 552 GEAR 13 "P" 12 "R" 11 "N" 1 "D" 2 "D" 3 "D" 4 "D" 5 "D" 6 "D";
