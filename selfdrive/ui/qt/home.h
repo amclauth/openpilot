@@ -18,6 +18,8 @@
 
 #include "frogpilot/ui/qt/widgets/developer_sidebar.h"
 
+class ExperimentalModeButton;
+
 class OffroadHome : public QFrame {
   Q_OBJECT
 
@@ -44,6 +46,7 @@ private:
 
   // FrogPilot variables
   ElidedLabel* date;
+  ExperimentalModeButton *experimental_mode_btn;
 };
 
 class HomeWindow : public QWidget {

@@ -213,9 +213,9 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
     right_widget->setFixedWidth(750);
     right_column->setSpacing(30);
 
-    ExperimentalModeButton *experimental_mode = new ExperimentalModeButton(this);
-    QObject::connect(experimental_mode, &ExperimentalModeButton::openSettings, this, &OffroadHome::openSettings);
-    right_column->addWidget(experimental_mode, 1);
+    experimental_mode_btn = new ExperimentalModeButton(this);
+    QObject::connect(experimental_mode_btn, &ExperimentalModeButton::openSettings, this, &OffroadHome::openSettings);
+    right_column->addWidget(experimental_mode_btn, 1);
 
     SetupWidget *setup_widget = new SetupWidget;
     QObject::connect(setup_widget, &SetupWidget::openSettings, this, &OffroadHome::openSettings);
@@ -292,4 +292,8 @@ void OffroadHome::refresh() {
   if (alerts) {
     alert_notif->setText(QString::number(alerts) + (alerts > 1 ? tr(" ALERTS") : tr(" ALERT")));
   }
+
+  experimental_mode_btn->setVisible(
+    frogpilotUIState()->frogpilot_toggles.value("openpilot_longitudinal_active").toBool()
+  );
 }
