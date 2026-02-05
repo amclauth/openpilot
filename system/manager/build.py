@@ -82,6 +82,10 @@ def build(spinner: Spinner, dirty: bool = False, minimal: bool = False) -> None:
     cache_size -= f.stat().st_size
     f.unlink()
 
+  # Create prebuilt marker so subsequent boots skip the build
+  prebuilt_path = Path(BASEDIR) / "prebuilt"
+  prebuilt_path.touch()
+
 
 if __name__ == "__main__":
   spinner = Spinner()
