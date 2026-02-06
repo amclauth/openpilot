@@ -493,6 +493,8 @@ def main() -> None:
             cloudlog.info("skipping fetch, connection metered")
           elif wait_helper.user_request == UserRequest.CHECK:
             cloudlog.info("skipping fetch, only checking")
+          elif not manual_update_requested and not updater.update_available:
+            cloudlog.info("skipping fetch, already up to date")
           else:
             updater.fetch_update()
             write_time_to_param(params, "UpdaterLastFetchTime")
