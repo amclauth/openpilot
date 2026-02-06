@@ -316,28 +316,7 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
                 })
                 return
 
-        # Clear DTCs if requested (before scanning so results show fresh state)
-        if params.get_bool("ClearDtcNextBoot"):
-            logger.info("ClearDtcNextBoot requested, clearing codes on bus %d", obd_bus)
-            if spinner:
-                spinner.update("Clearing DTCs...")
-            try:
-                clear_uds = UdsClient(panda, 0x7DF, bus=obd_bus, timeout=1.0)
-                try:
-                    clear_uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
-                except MessageTimeoutError:
-                    pass  # Broadcast functional address doesn't get proper response
-                try:
-                    clear_uds.clear_diagnostic_information(DTC_GROUP_TYPE.ALL)
-                except MessageTimeoutError:
-                    pass  # Broadcast functional address doesn't get proper response
-                logger.info("DTC clear broadcast sent")
-            except Exception:
-                logger.exception("Failed to clear DTCs")
-            params.remove("ClearDtcNextBoot")
-            time.sleep(0.5)  # Let ECUs process the clear
-            if spinner:
-                spinner.update("Scanning DTCs...")
+        clear_requested = params.get_bool("ClearDtcNextBoot")
 
         # Scan each ECU for DTCs
         scan_result = {
@@ -374,6 +353,56 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
             if not ecu_result["supports_dtc"] and ecu_result["error"]:
                 cache_entry["nrc"] = ecu_result["error"]
             cache_data["ecus"][addr_key] = cache_entry
+
+        # Clear DTCs if requested: target only ECUs that have codes,
+        # then re-scan those ECUs to show what comes back immediately.
+        if clear_requested and not _timed_out:
+            ecus_with_dtcs = [
+                (addr_key, ecu_data)
+                for addr_key, ecu_data in scan_result["ecus"].items()
+                if ecu_data["dtcs"]
+            ]
+            if ecus_with_dtcs:
+                logger.info(
+                    "ClearDtcNextBoot: clearing %d ECUs with codes",
+                    len(ecus_with_dtcs),
+                )
+                if spinner:
+                    spinner.update("Clearing DTCs...")
+                for addr_key, ecu_data in ecus_with_dtcs:
+                    tx_addr = int(addr_key, 16)
+                    name = ecu_data.get("name", addr_key)
+                    try:
+                        uds = UdsClient(panda, tx_addr, bus=obd_bus, timeout=1.0)
+                        uds.diagnostic_session_control(
+                            SESSION_TYPE.EXTENDED_DIAGNOSTIC
+                        )
+                        uds.clear_diagnostic_information(DTC_GROUP_TYPE.ALL)
+                        uds.diagnostic_session_control(SESSION_TYPE.DEFAULT)
+                        logger.info("  Cleared %s (%s)", name, addr_key)
+                    except (MessageTimeoutError, NegativeResponseError) as e:
+                        logger.info("  Clear failed on %s: %s", name, e)
+                    except Exception:
+                        logger.exception("  Error clearing %s", name)
+                time.sleep(0.5)
+
+                # Re-scan only the ECUs we just cleared
+                if spinner:
+                    spinner.update("Re-scanning DTCs...")
+                for addr_key, _ in ecus_with_dtcs:
+                    if _timed_out:
+                        break
+                    tx_addr = int(addr_key, 16)
+                    ecu_result = scan_ecu_dtcs(panda, tx_addr, obd_bus)
+                    scan_result["ecus"][addr_key] = {
+                        "name": ecu_result["name"],
+                        "address": ecu_result["address"],
+                        "dtcs": ecu_result["dtcs"],
+                        "error": ecu_result["error"],
+                    }
+            else:
+                logger.info("ClearDtcNextBoot: no DTCs found, nothing to clear")
+            params.remove("ClearDtcNextBoot")
 
         # Count total DTCs
         scan_result["total_dtcs"] = sum(
