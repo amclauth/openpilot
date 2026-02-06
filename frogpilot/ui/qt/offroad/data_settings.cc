@@ -152,6 +152,18 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
   }
   dataMainList->addItem(uploadServerToggle);
 
+  ParamControl *disableAthenaToggle = new ParamControl(
+    "DisableAthena", tr("Disable Athena"),
+    tr("<b>Disable the Athena daemon</b> which connects to comma.ai servers for "
+       "telemetry, remote access, and crash reporting. Does not affect SSH, "
+       "custom upload server, or Konik server connections."),
+    "");
+  disableAthenaToggle->setConfirmation(true, false);
+  if (forceOpenDescriptions) {
+    disableAthenaToggle->showDescription();
+  }
+  dataMainList->addItem(disableAthenaToggle);
+
   ButtonControl *deleteDrivingDataButton = new ButtonControl(tr("Delete Driving Data"), tr("DELETE"), tr("<b>Delete all stored driving footage and data</b> to free up space and clear private information."));
   QObject::connect(deleteDrivingDataButton, &ButtonControl::clicked, [=]() {
     QDir hdDataDir("/data/media/0/realdata_HD/");

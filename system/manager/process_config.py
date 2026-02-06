@@ -3,7 +3,7 @@ import os
 from cereal import car
 from openpilot.common.params import Params
 from openpilot.system.hardware import PC, TICI
-from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
+from openpilot.system.manager.process import PythonProcess, NativeProcess
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 
@@ -54,6 +54,9 @@ def allow_logging(started, params, CP: car.CarParams, classic_model, tinygrad_mo
 def allow_uploads(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return not frogpilot_toggles.no_uploads or frogpilot_toggles.no_onroad_uploads
 
+def allow_athena(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
+  return not getattr(frogpilot_toggles, 'disable_athena', False)
+
 def run_classic_modeld(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return started and classic_model
 
@@ -67,7 +70,7 @@ def run_tinygrad_modeld(started, params, CP: car.CarParams, classic_model, tinyg
   return started and tinygrad_model
 
 procs = [
-  DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid"),
+  PythonProcess("manage_athenad", "system.athena.manage_athenad", allow_athena),
 
   NativeProcess("camerad", "system/camerad", ["./camerad"], driverview),
   NativeProcess("logcatd", "system/logcatd", ["./logcatd"], allow_logging),

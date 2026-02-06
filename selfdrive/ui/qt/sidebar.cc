@@ -1,6 +1,8 @@
 #include "selfdrive/ui/qt/sidebar.h"
 
 #include <QMouseEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include "selfdrive/ui/qt/util.h"
 
@@ -153,13 +155,47 @@ void Sidebar::updateState(const UIState &s, const FrogPilotUIState &fs) {
   setProperty("netStrength", strength > 0 ? strength + 1 : 0);
 
   ItemStatus connectStatus;
-  auto last_ping = deviceState.getLastAthenaPingTime();
-  if (last_ping == 0) {
-    connectStatus = ItemStatus{{tr("CONNECT"), tr("OFFLINE")}, warning_color};
+  bool customUploadEnabled = params.getBool("CustomUploadEnabled");
+  bool athenaDisabled = params.getBool("DisableAthena");
+
+  if (customUploadEnabled) {
+    int free_space = deviceState.getFreeSpacePercent();
+    if (free_space < 10) {
+      connectStatus = {{tr("STORAGE"), tr("LOW")}, danger_color};
+    } else {
+      std::string raw = params.get("UploaderStatus");
+      if (raw.empty()) {
+        connectStatus = {{tr("UPLOAD"), tr("IDLE")}, sidebar_color3};
+      } else {
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(raw.c_str(), raw.size()));
+        QJsonObject obj = doc.object();
+        int remaining = obj["segments_remaining"].toInt();
+        bool connected = obj["connected"].toBool();
+        auto netType = deviceState.getNetworkType();
+        bool hasNetwork = netType != cereal::DeviceState::NetworkType::NONE;
+
+        if (hasNetwork && !connected) {
+          connectStatus = {{tr("UPLOAD"), tr("ERROR")}, danger_color};
+        } else if (!hasNetwork && remaining > 0) {
+          connectStatus = {{tr("NO WIFI"), QString::number(remaining) + tr(" SEGS")}, sidebar_color3};
+        } else if (connected && remaining > 0) {
+          connectStatus = {{tr("UPLOAD"), QString::number(remaining) + tr(" SEGS")}, sidebar_color3};
+        } else {
+          connectStatus = {{tr("UPLOAD"), tr("SYNCED")}, sidebar_color3};
+        }
+      }
+    }
+  } else if (athenaDisabled) {
+    connectStatus = {{tr("CONNECT"), tr("DISABLED")}, good_color};
   } else {
-    connectStatus = nanos_since_boot() - last_ping < 80e9
-                        ? ItemStatus{{tr("CONNECT"), tr("ONLINE")}, sidebar_color3}
-                        : ItemStatus{{tr("CONNECT"), tr("ERROR")}, danger_color};
+    auto last_ping = deviceState.getLastAthenaPingTime();
+    if (last_ping == 0) {
+      connectStatus = ItemStatus{{tr("CONNECT"), tr("OFFLINE")}, warning_color};
+    } else {
+      connectStatus = nanos_since_boot() - last_ping < 80e9
+                          ? ItemStatus{{tr("CONNECT"), tr("ONLINE")}, sidebar_color3}
+                          : ItemStatus{{tr("CONNECT"), tr("ERROR")}, danger_color};
+    }
   }
   setProperty("connectStatus", QVariant::fromValue(connectStatus));
 
@@ -174,7 +210,7 @@ void Sidebar::updateState(const UIState &s, const FrogPilotUIState &fs) {
   }
   setProperty("tempStatus", QVariant::fromValue(tempStatus));
 
-  ItemStatus pandaStatus = {{tr("VEHICLE"), tr("ONLINE")}, sidebar_color2};
+  ItemStatus pandaStatus = {{tr("PANDA"), tr("ONLINE")}, sidebar_color2};
   if (s.scene.pandaType == cereal::PandaState::PandaType::UNKNOWN) {
     pandaStatus = {{tr("NO"), tr("PANDA")}, danger_color};
   } else if (s.scene.started && !sm["liveLocationKalman"].getLiveLocationKalman().getGpsOK()) {

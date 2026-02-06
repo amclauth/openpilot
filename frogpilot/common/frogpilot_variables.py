@@ -213,6 +213,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("DeveloperUI", "0", 3, "0"),
   ("DeviceManagement", "1", 1, "0"),
   ("DeviceShutdown", "9", 1, "33"),
+  ("DisableAthena", "0", 2, "0"),
   ("DisableOnroadUploads", "0", 2, "0"),
   ("DisableOpenpilotLongitudinal", "0", 0, "0"),
   ("DiscordUsername", "", 0, ""),
@@ -756,6 +757,7 @@ class FrogPilotVariables:
     toggle.device_shutdown_time = (device_shutdown_setting - 3) * 3600 if device_shutdown_setting >= 4 else device_shutdown_setting * (60 * 15)
     toggle.increase_thermal_limits = device_management and (params.get_bool("IncreaseThermalLimits") if tuning_level >= level["IncreaseThermalLimits"] else default.get_bool("IncreaseThermalLimits"))
     toggle.low_voltage_shutdown = np.clip(params.get_float("LowVoltageShutdown"), VBATT_PAUSE_CHARGING, 12.5) if device_management and tuning_level >= level["LowVoltageShutdown"] else default.get_float("LowVoltageShutdown")
+    toggle.disable_athena = device_management and (params.get_bool("DisableAthena") if tuning_level >= level["DisableAthena"] else default.get_bool("DisableAthena"))
     toggle.fire_the_babysitter = device_management and (params.get_bool("FireTheBabysitter") if tuning_level >= level["FireTheBabysitter"] else default.get_bool("FireTheBabysitter"))  # FireTheBabysitter change
     toggle.no_logging = device_management and (params.get_bool("NoLogging") if tuning_level >= level["NoLogging"] else default.get_bool("NoLogging")) and not self.vetting_branch or toggle.force_onroad
     toggle.no_uploads = device_management and (params.get_bool("NoUploads") if tuning_level >= level["NoUploads"] else default.get_bool("NoUploads")) and not self.vetting_branch or toggle.use_higher_bitrate
