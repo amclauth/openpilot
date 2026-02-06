@@ -79,7 +79,6 @@ void UploadStatusWidget::refresh() {
   int total = obj["total"].toInt();
   double progress = obj["progress"].toDouble();
   QString state = obj["state"].toString();
-  bool connected = obj["connected"].toBool();
   QString server_host = obj["server_host"].toString();
 
   // Update host label text from status JSON
