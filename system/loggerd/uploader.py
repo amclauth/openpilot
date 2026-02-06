@@ -31,6 +31,7 @@ CURSOR_FILENAME = "_upload_cursor"
 SWAGLOG_DIR = "/data/log"
 SWAGLOG_CURSOR = "_swaglog_upload_cursor"
 SWAGLOG_MTIME_GATE = 60  # seconds since last write before uploading
+SEGMENT_MTIME_GATE = 60  # seconds since last write before uploading segment
 
 MAX_UPLOAD_SIZES = {
   "qlog": 25*1e6,  # can't be too restrictive here since we use qlogs to find
@@ -119,6 +120,12 @@ class Uploader:
     self._batch_size: int = 0
     self._upload_state: str = "idle"
     self._prev_total: int = 0
+    # Segment upload tracking (custom server, cursor+mtime)
+    self._seg_watch_segment: str = ""
+    self._seg_watch_file: str = ""
+    self._seg_watch_size: int = 0
+    self._seg_current: str = ""
+    self._seg_files: list[tuple[str, str, str]] = []
 
   def _read_cursor(self) -> str | None:
     """Read the upload cursor (last fully-uploaded segment dir name)."""
@@ -138,23 +145,9 @@ class Uploader:
       f.write(dirname)
     os.replace(tmp, path)
 
-  def _is_dir_fully_uploaded(self, path: str) -> bool:
-    """Check if all files in a segment directory have upload xattr."""
-    try:
-      names = os.listdir(path)
-    except OSError:
-      return False
-    if not names:
-      return False
-    for name in names:
-      fn = os.path.join(path, name)
-      if os.path.isfile(fn):
-        try:
-          if getxattr(fn, UPLOAD_ATTR_NAME) != UPLOAD_ATTR_VALUE:
-            return False
-        except OSError:
-          return False
-    return True
+  def _has_active_lock(self, path: str, names: list[str]) -> bool:
+    """Check if a directory has a lock file."""
+    return any(name.endswith(".lock") for name in names)
 
   def _read_swaglog_cursor(self) -> tuple[str, int] | None:
     """Read swaglog cursor: (filename, size_at_upload)."""
@@ -238,36 +231,134 @@ class Uploader:
 
     return None
 
-  def compute_upload_status(self) -> dict:
-    """Compute current upload status for the UI widget."""
+  def _next_custom_segment_file(self) -> tuple[str, str, str] | None:
+    """Return next segment file to upload for custom server.
+
+    Uses cursor + mtime stability check instead of xattr/locks.
+    Two-pass: first call records newest file name+size, second call
+    confirms unchanged + mtime > 60s before queuing all files.
+    """
+    # If we have files queued from the current segment, return next
+    if self._seg_files:
+      if os.path.isdir(os.path.join(self.root, self._seg_current)):
+        return self._seg_files[0]
+      # Segment was deleted (e.g. by deleter) — skip it
+      cloudlog.event("uploader_segment_deleted", segment=self._seg_current)
+      self._seg_files = []
+      self._seg_current = ""
+
     cursor = self._read_cursor()
     cursor_sort = get_directory_sort(cursor) if cursor else None
 
-    segments_remaining = 0
-    segments_uploaded = 0
-    segments_locked = 0
     for logdir in listdir_by_creation(self.root):
       if not logdir[0:1].isdigit():
         continue
       if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
         continue
+
+      path = os.path.join(self.root, logdir)
+      try:
+        names = [
+          n for n in os.listdir(path)
+          if not n.endswith(".lock")
+          and os.path.isfile(os.path.join(path, n))
+        ]
+      except OSError:
+        continue
+      if not names:
+        continue
+
+      # Find newest file by mtime
+      newest_name = ""
+      newest_mtime = 0.0
+      newest_size = 0
+      for n in names:
+        fn = os.path.join(path, n)
+        try:
+          st = os.stat(fn)
+          if st.st_mtime > newest_mtime:
+            newest_mtime = st.st_mtime
+            newest_name = n
+            newest_size = st.st_size
+        except OSError:
+          continue
+
+      if not newest_name:
+        continue
+
+      age = time.time() - newest_mtime
+
+      # Two-pass stability check
+      if (self._seg_watch_segment == logdir
+              and self._seg_watch_file == newest_name
+              and self._seg_watch_size == newest_size
+              and age > SEGMENT_MTIME_GATE):
+        # Stable — queue all files for upload
+        self._seg_current = logdir
+        self._seg_files = []
+        for n in sorted(names):
+          key = os.path.join(logdir, n)
+          fn = os.path.join(path, n)
+          self._seg_files.append((n, key, fn))
+        if self._seg_files:
+          return self._seg_files[0]
+
+      # Record observation for next pass (or re-record same values)
+      self._seg_watch_segment = logdir
+      self._seg_watch_file = newest_name
+      self._seg_watch_size = newest_size
+      return None
+
+    # No segments to upload
+    self._seg_watch_segment = ""
+    return None
+
+  def compute_upload_status(self) -> dict:
+    """Compute current upload status for the UI widget.
+
+    For custom server: counts segments after cursor using mtime to
+    distinguish actively-writing segments from ready ones.
+    Cursor advances when all files in a segment are uploaded, so all
+    segments after cursor are pending.
+    """
+    cursor = self._read_cursor()
+    cursor_sort = get_directory_sort(cursor) if cursor else None
+
+    total_after_cursor = 0
+    segments_writing = 0
+    now = time.time()
+
+    for logdir in listdir_by_creation(self.root):
+      if not logdir[0:1].isdigit():
+        continue
+      if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
+        continue
+
       path = os.path.join(self.root, logdir)
       try:
         names = os.listdir(path)
       except OSError:
         continue
-      if any(name.endswith(".lock") for name in names):
-        segments_locked += 1
-        continue
-      if self._is_dir_fully_uploaded(path):
-        segments_uploaded += 1
-      else:
-        segments_remaining += 1
+
+      total_after_cursor += 1
+
+      # Check if newest file is still being written
+      newest_mtime = 0.0
+      for n in names:
+        fn = os.path.join(path, n)
+        try:
+          mt = os.path.getmtime(fn)
+          if mt > newest_mtime:
+            newest_mtime = mt
+        except OSError:
+          continue
+      if newest_mtime and now - newest_mtime < SEGMENT_MTIME_GATE:
+        segments_writing += 1
+
+    # All segments after cursor are pending (cursor advances on completion)
+    pending = total_after_cursor
 
     # Batch tracking for progress bar
-    total_after_cursor = segments_uploaded + segments_remaining + segments_locked
-    pending = segments_remaining + segments_locked
-
     if total_after_cursor == 0:
       pass  # Keep _batch_size for SYNCED display
     elif self._batch_size == 0 or self._prev_total == 0:
@@ -280,12 +371,10 @@ class Uploader:
     progress = uploaded_count / self._batch_size if self._batch_size > 0 else 1.0
 
     # Server host
-    server_host = ""
-    if self.custom_server:
-      parsed = urlparse(self.custom_server)
-      server_host = parsed.hostname or ""
-      if parsed.port:
-        server_host += f":{parsed.port}"
+    parsed = urlparse(self.custom_server)
+    server_host = parsed.hostname or ""
+    if parsed.port:
+      server_host += f":{parsed.port}"
 
     return {
       "uploaded": uploaded_count,
@@ -294,7 +383,7 @@ class Uploader:
       "state": self._upload_state,
       "connected": self._last_connected,
       "server_host": server_host,
-      "has_locked": segments_locked > 0,
+      "has_locked": segments_writing > 0,
     }
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
@@ -310,16 +399,22 @@ class Uploader:
         if get_directory_sort(logdir) <= cursor_sort:
           continue
 
+      # Custom server segments handled by _next_custom_segment_file()
+      if self.custom_server and logdir[0:1].isdigit():
+        continue
+
       path = os.path.join(self.root, logdir)
       try:
         names = os.listdir(path)
       except OSError:
         continue
 
-      if any(name.endswith(".lock") for name in names):
+      if self._has_active_lock(path, names):
         continue
 
       for name in sorted(names, key=lambda n: self.immediate_priority.get(n, 1000)):
+        if name.endswith(".lock"):
+          continue
         key = os.path.join(logdir, name)
         fn = os.path.join(path, name)
         # skip files already uploaded
@@ -358,10 +453,8 @@ class Uploader:
       if swaglog:
         return swaglog
 
-      # Custom server: upload all remaining files
-      for name, key, fn in upload_files:
-        return name, key, fn
-      return None
+      # Custom server: segments via cursor+mtime (no xattr)
+      return self._next_custom_segment_file()
 
     # Comma/Konik: only upload priority files
     for name, key, fn in upload_files:
@@ -453,26 +546,28 @@ class Uploader:
       self._last_connected = True
       self._has_connected = True
 
-      # tag file as uploaded (skip swaglogs — cursor-based, no xattr)
-      if not key.startswith("swaglog/"):
+      logdir = key.split("/")[0]
+      is_segment = logdir[0:1].isdigit()
+
+      if self.custom_server and logdir == "swaglog":
+        # Advance swaglog cursor with current file size
+        self._write_swaglog_cursor(name, sz)
+      elif self.custom_server and is_segment:
+        # Pop from queue, advance cursor when segment is done
+        if self._seg_files and self._seg_files[0][1] == key:
+          self._seg_files.pop(0)
+        if not self._seg_files and self._seg_current:
+          cursor = self._read_cursor()
+          cursor_sort = get_directory_sort(cursor) if cursor else None
+          if not cursor_sort or get_directory_sort(self._seg_current) > cursor_sort:
+            self._write_cursor(self._seg_current)
+          self._seg_current = ""
+      else:
+        # Boot/crash or comma path: use xattr
         try:
           setxattr(fn, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
         except OSError:
           cloudlog.event("uploader_setxattr_failed", exc=last_exc, key=key, fn=fn, sz=sz)
-
-      # advance cursor if this segment dir is fully uploaded
-      if self.custom_server:
-        logdir = key.split("/")[0]
-        if logdir == "swaglog":
-          # Advance swaglog cursor with current file size
-          self._write_swaglog_cursor(name, sz)
-        elif logdir[0:1].isdigit():
-          dir_path = os.path.join(self.root, logdir)
-          if self._is_dir_fully_uploaded(dir_path):
-            cursor = self._read_cursor()
-            cursor_sort = get_directory_sort(cursor) if cursor else None
-            if not cursor_sort or get_directory_sort(logdir) > cursor_sort:
-              self._write_cursor(logdir)
 
     self._current_uploading = ""
     return success

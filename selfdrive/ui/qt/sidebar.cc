@@ -165,26 +165,27 @@ void Sidebar::updateState(const UIState &s, const FrogPilotUIState &fs) {
     } else {
       std::string raw = params.get("UploaderStatus");
       if (raw.empty()) {
-        connectStatus = {{tr("UPLOAD"), tr("IDLE")}, sidebar_color3};
+        connectStatus = {{tr("IDLE"), tr("0/0")}, sidebar_color3};
       } else {
         QJsonDocument doc = QJsonDocument::fromJson(QByteArray(raw.c_str(), raw.size()));
         QJsonObject obj = doc.object();
         int uploaded = obj["uploaded"].toInt();
         int total = obj["total"].toInt();
         QString state = obj["state"].toString();
+        QString counts = QString::number(uploaded) + "/" + QString::number(total);
         auto netType = deviceState.getNetworkType();
         bool hasNetwork = netType != cereal::DeviceState::NetworkType::NONE;
 
         if (state == "error") {
-          connectStatus = {{tr("UPLOAD"), tr("ERROR")}, danger_color};
-        } else if (!hasNetwork && total > 0) {
-          int pending = total - uploaded;
-          connectStatus = {{tr("NO WIFI"), QString::number(pending) + tr(" SEGS")}, sidebar_color3};
-        } else if (state == "uploading" && uploaded < total) {
-          int pending = total - uploaded;
-          connectStatus = {{tr("UPLOAD"), QString::number(pending) + tr(" SEGS")}, sidebar_color3};
+          connectStatus = {{tr("ERROR"), counts}, danger_color};
+        } else if (total == 0) {
+          connectStatus = {{tr("IDLE"), tr("0/0")}, sidebar_color3};
+        } else if (!hasNetwork) {
+          connectStatus = {{tr("NO WIFI"), counts}, sidebar_color3};
+        } else if (uploaded == total) {
+          connectStatus = {{tr("SYNCED"), counts}, sidebar_color3};
         } else {
-          connectStatus = {{tr("UPLOAD"), tr("SYNCED")}, sidebar_color3};
+          connectStatus = {{tr("UPLOAD"), counts}, sidebar_color3};
         }
       }
     }
