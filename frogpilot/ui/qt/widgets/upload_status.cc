@@ -29,7 +29,7 @@ UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
 
   layout->addStretch(1);
 
-  progress_label = new QLabel("Waiting for uploader...");
+  progress_label = new QLabel("IDLE: 0/0");
   progress_label->setStyleSheet("font-size: 50px;");
   layout->addWidget(progress_label);
 
@@ -66,9 +66,6 @@ UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
 void UploadStatusWidget::refresh() {
   std::string raw = params.get("UploaderStatus");
   if (raw.empty()) {
-    progress_label->setText("Waiting for uploader...");
-    progress_bar->setValue(0);
-    detail_label->setText("");
     return;
   }
 
@@ -78,27 +75,42 @@ void UploadStatusWidget::refresh() {
   }
 
   QJsonObject obj = doc.object();
-  int remaining = obj["segments_remaining"].toInt();
-  int batch_size = obj["batch_size"].toInt();
+  int uploaded = obj["uploaded"].toInt();
+  int total = obj["total"].toInt();
   double progress = obj["progress"].toDouble();
+  QString state = obj["state"].toString();
   bool connected = obj["connected"].toBool();
+  QString server_host = obj["server_host"].toString();
 
-  // Hostname color: grey (initial), green (connected), red (disconnected)
-  if (obj.contains("connected")) {
-    host_label->setStyleSheet(connected
-      ? "font-size: 36px; color: #178643;"
-      : "font-size: 36px; color: #E22C2C;");
+  // Update host label text from status JSON
+  if (!server_host.isEmpty()) {
+    host_label->setText(server_host);
   }
 
-  if (remaining == 0) {
-    progress_label->setText("All synced");
-    progress_bar->setValue(1000);
-    detail_label->setText("");
+  // Determine display state and host color
+  QString status_text;
+  QString host_color;
+
+  if (uploaded == total && total > 0) {
+    // SYNCED takes priority regardless of state
+    status_text = "SYNCED: " + QString::number(uploaded) + "/" + QString::number(total);
+    host_color = "#178643";
+  } else if (state == "uploading") {
+    status_text = "UPLOADING: " + QString::number(uploaded) + "/" + QString::number(total);
+    host_color = "#178643";
+  } else if (state == "error") {
+    status_text = "ERROR: " + QString::number(uploaded) + "/" + QString::number(total);
+    host_color = "#E22C2C";
+  } else if (state == "no_network") {
+    status_text = "IDLE: " + QString::number(uploaded) + "/" + QString::number(total);
+    host_color = "#A0A0A0";
   } else {
-    int uploaded = batch_size - remaining;
-    progress_label->setText(QString::number(uploaded) + "/" +
-      QString::number(batch_size) + " segments");
-    progress_bar->setValue(static_cast<int>(progress * 1000));
-    detail_label->setText("");
+    status_text = "IDLE: " + QString::number(uploaded) + "/" + QString::number(total);
+    host_color = "#A0A0A0";
   }
+
+  progress_label->setText(status_text);
+  progress_bar->setValue(static_cast<int>(progress * 1000));
+  host_label->setStyleSheet("font-size: 36px; color: " + host_color + ";");
+  detail_label->setText("");
 }

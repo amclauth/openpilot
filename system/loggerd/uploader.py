@@ -111,6 +111,8 @@ class Uploader:
     self._last_connected: bool = False
     self._status_update_time: float = 0.0
     self._batch_size: int = 0
+    self._upload_state: str = "idle"
+    self._prev_total: int = 0
 
   def _read_cursor(self) -> str | None:
     """Read the upload cursor (last fully-uploaded segment dir name)."""
@@ -154,6 +156,8 @@ class Uploader:
     cursor_sort = get_directory_sort(cursor) if cursor else None
 
     segments_remaining = 0
+    segments_uploaded = 0
+    segments_locked = 0
     for logdir in listdir_by_creation(self.root):
       if not logdir[0:1].isdigit():
         continue
@@ -165,22 +169,27 @@ class Uploader:
       except OSError:
         continue
       if any(name.endswith(".lock") for name in names):
+        segments_locked += 1
         continue
-      if not self._is_dir_fully_uploaded(path):
+      if self._is_dir_fully_uploaded(path):
+        segments_uploaded += 1
+      else:
         segments_remaining += 1
 
     # Batch tracking for progress bar
-    if self._batch_size == 0 and segments_remaining > 0:
-      self._batch_size = segments_remaining
-    elif segments_remaining > self._batch_size:
-      self._batch_size = segments_remaining
-    elif segments_remaining == 0:
-      self._batch_size = 0
+    total_after_cursor = segments_uploaded + segments_remaining + segments_locked
+    pending = segments_remaining + segments_locked
 
-    if self._batch_size > 0:
-      progress = (self._batch_size - segments_remaining) / self._batch_size
-    else:
-      progress = 1.0
+    if total_after_cursor == 0:
+      pass  # Keep _batch_size for SYNCED display
+    elif self._batch_size == 0 or self._prev_total == 0:
+      self._batch_size = total_after_cursor  # New batch
+    elif total_after_cursor > self._batch_size:
+      self._batch_size = total_after_cursor  # Batch grew
+    self._prev_total = total_after_cursor
+
+    uploaded_count = max(0, self._batch_size - pending)
+    progress = uploaded_count / self._batch_size if self._batch_size > 0 else 1.0
 
     # Server host
     server_host = ""
@@ -191,13 +200,13 @@ class Uploader:
         server_host += f":{parsed.port}"
 
     return {
-      "segments_remaining": segments_remaining,
-      "batch_size": self._batch_size,
+      "uploaded": uploaded_count,
+      "total": self._batch_size,
       "progress": progress,
-      "last_upload_time": self._last_upload_time,
-      "uploading": self._current_uploading,
+      "state": self._upload_state,
       "connected": self._last_connected,
       "server_host": server_host,
+      "has_locked": segments_locked > 0,
     }
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
@@ -413,34 +422,57 @@ def main(exit_event: threading.Event = None) -> None:
   # FrogPilot variables
   frogpilot_toggles = get_frogpilot_toggles()
 
+  prev_offroad = params.get_bool("IsOffroad")
+  prev_network = NetworkType.none
+
   while not exit_event.is_set():
     sm.update(0)
     offroad = params.get_bool("IsOffroad")
     network_type = sm['deviceState'].networkType if not force_wifi else NetworkType.wifi
     at_home = offroad and network_type in (NetworkType.ethernet, NetworkType.wifi) or not frogpilot_toggles.no_onroad_uploads
+
+    # Reset backoff on state transitions
+    if offroad != prev_offroad or network_type != prev_network:
+      backoff = 0
+      prev_offroad = offroad
+      prev_network = network_type
+
     if network_type == NetworkType.none or not at_home:
+      if uploader.custom_server:
+        uploader._upload_state = "no_network"
+        now = time.monotonic()
+        if now - uploader._status_update_time >= 10:
+          status = uploader.compute_upload_status()
+          uploader.params.put_nonblocking("UploaderStatus", json.dumps(status))
+          uploader._status_update_time = now
       if allow_sleep:
-        time.sleep(60 if offroad else 5)
+        time.sleep(60)
       continue
 
     success = uploader.step(sm['deviceState'].networkType.raw, sm['deviceState'].networkMetered)
 
-    # Write upload status for UI widget
     if uploader.custom_server:
+      if success is True:
+        uploader._upload_state = "uploading"
+        backoff = 0.1
+      elif success is None:
+        uploader._upload_state = "idle"
+        backoff = 5 * 60
+      else:  # False — upload HTTP failure
+        uploader._upload_state = "error"
+        backoff = 5 * 60
+
+      # Write upload status for UI widget
       now = time.monotonic()
       if success or (now - uploader._status_update_time >= 10):
         status = uploader.compute_upload_status()
-        uploader.params.put_nonblocking(
-          "UploaderStatus", json.dumps(status)
-        )
+        # Idle but locked segments exist — poll faster
+        if uploader._upload_state == "idle" and status["has_locked"]:
+          uploader._upload_state = "uploading"
+          backoff = 10
+          status["state"] = "uploading"
+        uploader.params.put_nonblocking("UploaderStatus", json.dumps(status))
         uploader._status_update_time = now
-
-    if uploader.custom_server:
-      # Custom server: fixed 5-minute poll on failure/idle, fast retry on success
-      if success:
-        backoff = 0.1
-      else:
-        backoff = 5 * 60
     else:
       if success is None:
         backoff = 60 if offroad else 5
