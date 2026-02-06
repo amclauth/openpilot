@@ -24,6 +24,7 @@ from panda import Panda
 from panda.python.uds import (
     UdsClient,
     SESSION_TYPE,
+    DTC_GROUP_TYPE,
     DTC_REPORT_TYPE,
     DTC_STATUS_MASK_TYPE,
     MessageTimeoutError,
@@ -314,6 +315,29 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
                     "total_dtcs": 0,
                 })
                 return
+
+        # Clear DTCs if requested (before scanning so results show fresh state)
+        if params.get_bool("ClearDtcNextBoot"):
+            logger.info("ClearDtcNextBoot requested, clearing codes on bus %d", obd_bus)
+            if spinner:
+                spinner.update("Clearing DTCs...")
+            try:
+                clear_uds = UdsClient(panda, 0x7DF, bus=obd_bus, timeout=1.0)
+                try:
+                    clear_uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
+                except MessageTimeoutError:
+                    pass  # Broadcast functional address doesn't get proper response
+                try:
+                    clear_uds.clear_diagnostic_information(DTC_GROUP_TYPE.ALL)
+                except MessageTimeoutError:
+                    pass  # Broadcast functional address doesn't get proper response
+                logger.info("DTC clear broadcast sent")
+            except Exception:
+                logger.exception("Failed to clear DTCs")
+            params.remove("ClearDtcNextBoot")
+            time.sleep(0.5)  # Let ECUs process the clear
+            if spinner:
+                spinner.update("Scanning DTCs...")
 
         # Scan each ECU for DTCs
         scan_result = {

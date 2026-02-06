@@ -29,6 +29,16 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
   });
   addItem(dtcScanToggle);
 
+  ParamControl *dtcClearToggle = new ParamControl("ClearDtcNextBoot",
+    tr("Clear Codes on Next Boot"),
+    tr("<b>Clear all diagnostic trouble codes</b> on the next startup. "
+       "Codes are cleared before scanning, so the results will show only "
+       "codes that re-set immediately. This toggle resets after one use."), "");
+  if (forceOpenDescriptions) {
+    dtcClearToggle->showDescription();
+  }
+  addItem(dtcClearToggle);
+
   ButtonControl *dtcResultsButton = new ButtonControl(tr("DTC Scan Results"), tr("VIEW"),
     tr("<b>View diagnostic trouble codes</b> from the most recent boot scan."));
   {
@@ -54,7 +64,7 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
     int ecusDiscovered = root.value("ecus_discovered").toInt(0);
     int totalDtcs = root.value("total_dtcs").toInt(0);
 
-    QString html = QString("<b>DTC Scan</b><br>%1 ECUs scanned, %2 DTCs found<br>")
+    QString html = QString("<h3>DTC Scan</h3>%1 ECUs scanned, %2 DTCs found<br><br>")
       .arg(ecusDiscovered).arg(totalDtcs);
 
     QJsonObject ecus = root.value("ecus").toObject();
@@ -69,12 +79,11 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
         continue;
       }
 
-      html += QString("<br><b>%1 (%2)</b>: ").arg(ecuName, addr);
+      html += QString("<h3>%1 (%2)</h3>").arg(ecuName, addr);
 
       if (!error.isEmpty()) {
-        html += error;
+        html += error + "<br>";
       } else {
-        QStringList dtcList;
         for (const auto &dtcVal : dtcs) {
           QJsonObject dtc = dtcVal.toObject();
           QString code = dtc.value("code").toString();
@@ -83,18 +92,16 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
           for (const auto &s : statusArr) {
             statuses << s.toString();
           }
-          QString entry = code;
+          html += QString("<b>%1</b><br>").arg(code);
           if (!statuses.isEmpty()) {
-            entry += " [" + statuses.join(", ") + "]";
+            html += statuses.join(", ") + "<br>";
           }
-          dtcList << entry;
         }
-        html += dtcList.join(", ");
       }
     }
 
     if (totalDtcs == 0 && ecusDiscovered > 0) {
-      html += "<br><br>No trouble codes found.";
+      html += "No trouble codes found.";
     }
 
     ConfirmationDialog::rich(html, this);
