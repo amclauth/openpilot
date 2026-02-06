@@ -120,12 +120,17 @@ class Uploader:
     self._batch_size: int = 0
     self._upload_state: str = "idle"
     self._prev_total: int = 0
-    # Segment upload tracking (custom server, cursor+mtime)
+    # Segment upload tracking (custom server, cursor+monotonic)
     self._seg_watch_segment: str = ""
     self._seg_watch_file: str = ""
     self._seg_watch_size: int = 0
+    self._seg_watch_time: float = 0.0
     self._seg_current: str = ""
     self._seg_files: list[tuple[str, str, str]] = []
+    # Swaglog upload tracking (cursor+monotonic)
+    self._swag_watch_file: str = ""
+    self._swag_watch_size: int = 0
+    self._swag_watch_time: float = 0.0
 
   def _read_cursor(self) -> str | None:
     """Read the upload cursor (last fully-uploaded segment dir name)."""
@@ -172,9 +177,10 @@ class Uploader:
   def next_swaglog_to_upload(self) -> tuple[str, str, str] | None:
     """Return next swaglog file to upload, or None.
 
-    Uses a cursor tracking (filename, size) to handle re-uploads of
-    files that grew. Gates on mtime > 60s to avoid uploading files
-    still being written to.
+    Cursor stores (filename, size) to detect growth after upload.
+    A swaglog is only considered complete when its size matches the
+    cursor AND a newer file exists (rotation). Uses monotonic time
+    for stability gating (immune to GPS clock jumps).
     """
     try:
       entries = sorted(
@@ -185,29 +191,35 @@ class Uploader:
     if not entries:
       return None
 
-    now = time.time()
     cursor = self._read_swaglog_cursor()
 
     if cursor:
       cursor_name, cursor_size = cursor
       cursor_path = os.path.join(SWAGLOG_DIR, cursor_name)
 
-      # Check if cursor'd file has grown
+      # Check if cursor file grew since last upload
       try:
-        st = os.stat(cursor_path)
+        current_size = os.path.getsize(cursor_path)
       except OSError:
-        st = None
+        current_size = cursor_size  # Deleted — treat as unchanged
 
-      if st and st.st_size != cursor_size:
-        if now - st.st_mtime > SWAGLOG_MTIME_GATE:
-          # File grew but is quiet — re-upload
+      if current_size != cursor_size:
+        # File grew — watch for stability before re-uploading
+        if (self._swag_watch_file == cursor_name
+                and self._swag_watch_size == current_size
+                and time.monotonic() - self._swag_watch_time
+                > SWAGLOG_MTIME_GATE):
           key = f"swaglog/{cursor_name}"
           return cursor_name, key, cursor_path
-        else:
-          # Still being written — do nothing this pass
-          return None
+        # Record/update observation (only reset timer on change)
+        if (self._swag_watch_file != cursor_name
+                or self._swag_watch_size != current_size):
+          self._swag_watch_file = cursor_name
+          self._swag_watch_size = current_size
+          self._swag_watch_time = time.monotonic()
+        return None
 
-      # Cursor file is done, look for files after it
+      # Cursor file unchanged — look for files after it
       try:
         start_idx = entries.index(cursor_name) + 1
       except ValueError:
@@ -215,28 +227,37 @@ class Uploader:
     else:
       start_idx = 0
 
-    # Upload the next file with mtime > gate
+    # Upload next file with monotonic stability check
     for name in entries[start_idx:]:
       fn = os.path.join(SWAGLOG_DIR, name)
       try:
-        st = os.stat(fn)
+        sz = os.path.getsize(fn)
       except OSError:
         continue
-      if now - st.st_mtime > SWAGLOG_MTIME_GATE:
+
+      if (self._swag_watch_file == name
+              and self._swag_watch_size == sz
+              and time.monotonic() - self._swag_watch_time
+              > SWAGLOG_MTIME_GATE):
         key = f"swaglog/{name}"
         return name, key, fn
-      else:
-        # Hit the active file — stop
-        break
+
+      # Record observation, stop (process sequentially)
+      if (self._swag_watch_file != name
+              or self._swag_watch_size != sz):
+        self._swag_watch_file = name
+        self._swag_watch_size = sz
+        self._swag_watch_time = time.monotonic()
+      return None
 
     return None
 
   def _next_custom_segment_file(self) -> tuple[str, str, str] | None:
     """Return next segment file to upload for custom server.
 
-    Uses cursor + mtime stability check instead of xattr/locks.
+    Uses cursor + monotonic stability check instead of xattr/locks.
     Two-pass: first call records newest file name+size, second call
-    confirms unchanged + mtime > 60s before queuing all files.
+    confirms unchanged after 60 real seconds before queuing all files.
     """
     # If we have files queued from the current segment, return next
     if self._seg_files:
@@ -286,13 +307,12 @@ class Uploader:
       if not newest_name:
         continue
 
-      age = time.time() - newest_mtime
-
-      # Two-pass stability check
+      # Two-pass stability check (monotonic, immune to clock jumps)
       if (self._seg_watch_segment == logdir
               and self._seg_watch_file == newest_name
               and self._seg_watch_size == newest_size
-              and age > SEGMENT_MTIME_GATE):
+              and time.monotonic() - self._seg_watch_time
+              > SEGMENT_MTIME_GATE):
         # Stable — queue all files for upload
         self._seg_current = logdir
         self._seg_files = []
@@ -303,10 +323,14 @@ class Uploader:
         if self._seg_files:
           return self._seg_files[0]
 
-      # Record observation for next pass (or re-record same values)
-      self._seg_watch_segment = logdir
-      self._seg_watch_file = newest_name
-      self._seg_watch_size = newest_size
+      # Record observation (only reset timer when values change)
+      if (self._seg_watch_segment != logdir
+              or self._seg_watch_file != newest_name
+              or self._seg_watch_size != newest_size):
+        self._seg_watch_segment = logdir
+        self._seg_watch_file = newest_name
+        self._seg_watch_size = newest_size
+        self._seg_watch_time = time.monotonic()
       return None
 
     # No segments to upload
@@ -316,44 +340,20 @@ class Uploader:
   def compute_upload_status(self) -> dict:
     """Compute current upload status for the UI widget.
 
-    For custom server: counts segments after cursor using mtime to
-    distinguish actively-writing segments from ready ones.
-    Cursor advances when all files in a segment are uploaded, so all
-    segments after cursor are pending.
+    Counts segments after cursor. Cursor advances when all files in
+    a segment are uploaded, so all segments after cursor are pending.
     """
     cursor = self._read_cursor()
     cursor_sort = get_directory_sort(cursor) if cursor else None
 
     total_after_cursor = 0
-    segments_writing = 0
-    now = time.time()
 
     for logdir in listdir_by_creation(self.root):
       if not logdir[0:1].isdigit():
         continue
       if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
         continue
-
-      path = os.path.join(self.root, logdir)
-      try:
-        names = os.listdir(path)
-      except OSError:
-        continue
-
       total_after_cursor += 1
-
-      # Check if newest file is still being written
-      newest_mtime = 0.0
-      for n in names:
-        fn = os.path.join(path, n)
-        try:
-          mt = os.path.getmtime(fn)
-          if mt > newest_mtime:
-            newest_mtime = mt
-        except OSError:
-          continue
-      if newest_mtime and now - newest_mtime < SEGMENT_MTIME_GATE:
-        segments_writing += 1
 
     # All segments after cursor are pending (cursor advances on completion)
     pending = total_after_cursor
@@ -383,7 +383,7 @@ class Uploader:
       "state": self._upload_state,
       "connected": self._last_connected,
       "server_host": server_host,
-      "has_locked": segments_writing > 0,
+      "has_locked": total_after_cursor > 0,
     }
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
