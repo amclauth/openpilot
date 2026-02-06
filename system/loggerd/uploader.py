@@ -108,6 +108,28 @@ class Uploader:
     self._status_update_time: float = 0.0
     self._batch_size: int = 0
 
+  @staticmethod
+  def _segment_drive_time(segment_dir: str) -> float:
+    """Get the latest file mtime in a segment directory.
+
+    Directory mtime can be wrong if the directory was created before the
+    device clock was set from GPS. Files inside get their mtime when
+    recording completes, by which time the clock is correct.
+    """
+    best = 0.0
+    try:
+      for name in os.listdir(segment_dir):
+        fn = os.path.join(segment_dir, name)
+        try:
+          mt = os.path.getmtime(fn)
+          if mt > best:
+            best = mt
+        except OSError:
+          continue
+    except OSError:
+      pass
+    return best
+
   def _read_cursor(self) -> str | None:
     """Read the upload cursor (last fully-uploaded segment dir name)."""
     try:
@@ -187,10 +209,7 @@ class Uploader:
       logdir = uploading_key.split("/")[0]
       if logdir[0:1].isdigit():
         segment_dir = os.path.join(self.root, logdir)
-        try:
-          drive_time = os.path.getmtime(segment_dir)
-        except OSError:
-          pass
+        drive_time = self._segment_drive_time(segment_dir)
 
     # Server host
     server_host = ""
@@ -286,17 +305,15 @@ class Uploader:
       if self.custom_token:
         headers["Authorization"] = f"Bearer {self.custom_token}"
 
-      # Send directory modification time for segment dirs so the server
-      # can use date-based folder names. mtime is stable after segment
-      # recording completes (unlike ctime which changes on metadata ops).
+      # Send latest file mtime for segment dirs so the server can use
+      # date-based folder names. Directory mtime may be wrong if the
+      # dir was created before GPS clock fix; file mtimes are reliable.
       logdir = key.split("/")[0]
       if logdir[0:1].isdigit():
         segment_dir = os.path.join(self.root, logdir)
-        try:
-          mtime = int(os.path.getmtime(segment_dir))
+        mtime = int(self._segment_drive_time(segment_dir))
+        if mtime > 0:
           headers["X-Drive-Time"] = str(mtime)
-        except OSError:
-          pass
 
       cloudlog.debug("custom_upload %s -> %s", fn, url)
       with open(fn, "rb") as f:
