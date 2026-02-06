@@ -1,6 +1,5 @@
 #include "frogpilot/ui/qt/widgets/upload_status.h"
 
-#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUrl>
@@ -82,7 +81,6 @@ void UploadStatusWidget::refresh() {
   int remaining = obj["segments_remaining"].toInt();
   int batch_size = obj["batch_size"].toInt();
   double progress = obj["progress"].toDouble();
-  double drive_time = obj["drive_time"].toDouble();
   bool connected = obj["connected"].toBool();
 
   // Hostname color: grey (initial), green (connected), red (disconnected)
@@ -97,16 +95,10 @@ void UploadStatusWidget::refresh() {
     progress_bar->setValue(1000);
     detail_label->setText("");
   } else {
-    if (drive_time > 0) {
-      QDateTime dt = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(drive_time));
-      progress_label->setText(dt.toString("yyyy-MM-dd HH:mm"));
-    } else {
-      progress_label->setText("Uploading...");
-    }
-    progress_bar->setValue(static_cast<int>(progress * 1000));
-
     int uploaded = batch_size - remaining;
-    detail_label->setText(QString::number(uploaded) + "/" +
+    progress_label->setText(QString::number(uploaded) + "/" +
       QString::number(batch_size) + " segments");
+    progress_bar->setValue(static_cast<int>(progress * 1000));
+    detail_label->setText("");
   }
 }
