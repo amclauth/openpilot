@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdio>
 #include <string>
 
 #include "cereal/messaging/messaging.h"
@@ -53,17 +54,24 @@ int main(int argc, char** argv) {
   const std::string path = Path::log_root() + "/boot/" + id;
   LOGW("bootlog to %s", path.c_str());
 
-  // Open bootlog
   bool r = util::create_directories(Path::log_root() + "/boot/", 0775);
   assert(r);
 
-  RawFile file(path.c_str());
-  // Write initdata
-  file.write(logger_build_init_data().asBytes());
-  // Write bootlog
-  file.write(build_boot_log().asBytes());
+  // Create lock file (uploader skips dirs with .lock files)
+  const std::string lock_path = path + ".lock";
+  int lock_fd = HANDLE_EINTR(open(lock_path.c_str(), O_RDWR | O_CREAT, 0664));
+  assert(lock_fd >= 0);
+  close(lock_fd);
 
-  // Write out bootlog param to match routes with bootlog
+  {
+    RawFile file(path.c_str());
+    file.write(logger_build_init_data().asBytes());
+    file.write(build_boot_log().asBytes());
+  }  // RawFile destructor: fflush + fclose
+
+  // File fully written -- remove lock
+  std::remove(lock_path.c_str());
+
   Params().put("CurrentBootlog", id.c_str());
 
   return 0;
