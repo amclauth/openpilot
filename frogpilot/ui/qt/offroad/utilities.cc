@@ -17,6 +17,89 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
   }
   addItem(debugModeToggle);
 
+  ParamControl *dtcScanToggle = new ParamControl("DtcScanOnBoot", tr("DTC Scan on Boot"),
+    tr("<b>Scan vehicle ECUs for diagnostic trouble codes</b> during startup, before driving. Results appear below after the next boot."), "");
+  if (forceOpenDescriptions) {
+    dtcScanToggle->showDescription();
+  }
+  addItem(dtcScanToggle);
+
+  ButtonControl *dtcResultsButton = new ButtonControl(tr("DTC Scan Results"), tr("VIEW"),
+    tr("<b>View diagnostic trouble codes</b> from the most recent boot scan."));
+  {
+    QFile dtcFile("/data/dtc_scan.json");
+    if (dtcFile.exists() && dtcFile.open(QIODevice::ReadOnly)) {
+      QJsonDocument doc = QJsonDocument::fromJson(dtcFile.readAll());
+      int totalDtcs = doc.object().value("total_dtcs").toInt(0);
+      if (totalDtcs > 0) {
+        dtcResultsButton->setValue(QString("%1 DTCs").arg(totalDtcs));
+      }
+    }
+  }
+  QObject::connect(dtcResultsButton, &ButtonControl::clicked, [this]() {
+    QFile dtcFile("/data/dtc_scan.json");
+    if (!dtcFile.exists() || !dtcFile.open(QIODevice::ReadOnly)) {
+      ConfirmationDialog::alert(tr("No scan results yet. Enable \"DTC Scan on Boot\" and reboot."), this);
+      return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(dtcFile.readAll());
+    QJsonObject root = doc.object();
+
+    QString timestamp = root.value("timestamp").toString("unknown");
+    int ecusDiscovered = root.value("ecus_discovered").toInt(0);
+    int totalDtcs = root.value("total_dtcs").toInt(0);
+
+    QString html = QString("<b>DTC Scan - %1</b><br>%2 ECUs scanned, %3 DTCs found<br>")
+      .arg(timestamp).arg(ecusDiscovered).arg(totalDtcs);
+
+    QJsonObject ecus = root.value("ecus").toObject();
+    for (auto it = ecus.begin(); it != ecus.end(); ++it) {
+      QJsonObject ecu = it.value().toObject();
+      QString ecuName = ecu.value("name").toString();
+      QString addr = ecu.value("address").toString();
+      QJsonArray dtcs = ecu.value("dtcs").toArray();
+      QString error = ecu.value("error").toString();
+
+      if (dtcs.isEmpty() && error.isEmpty()) {
+        continue;
+      }
+
+      html += QString("<br><b>%1 (%2)</b>: ").arg(ecuName, addr);
+
+      if (!error.isEmpty()) {
+        html += error;
+      } else {
+        QStringList dtcList;
+        for (const auto &dtcVal : dtcs) {
+          QJsonObject dtc = dtcVal.toObject();
+          QString code = dtc.value("code").toString();
+          QJsonArray statusArr = dtc.value("status").toArray();
+          QStringList statuses;
+          for (const auto &s : statusArr) {
+            statuses << s.toString();
+          }
+          QString entry = code;
+          if (!statuses.isEmpty()) {
+            entry += " [" + statuses.join(", ") + "]";
+          }
+          dtcList << entry;
+        }
+        html += dtcList.join(", ");
+      }
+    }
+
+    if (totalDtcs == 0 && ecusDiscovered > 0) {
+      html += "<br><br>No trouble codes found.";
+    }
+
+    ConfirmationDialog::rich(html, this);
+  });
+  if (forceOpenDescriptions) {
+    dtcResultsButton->showDescription();
+  }
+  addItem(dtcResultsButton);
+
   ButtonControl *flashPandaButton = new ButtonControl(tr("Flash Panda"), tr("FLASH"), tr("<b>Reinstall the Panda firmware</b> to fix connection or reliability issues."));
   QObject::connect(flashPandaButton, &ButtonControl::clicked, [parent, flashPandaButton, this]() {
     if (ConfirmationDialog::confirm(tr("Are you sure you want to flash the Panda firmware?"), tr("Flash"), this)) {

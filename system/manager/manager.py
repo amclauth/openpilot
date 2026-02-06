@@ -103,6 +103,18 @@ def manager_init() -> None:
   params.put_bool("IsTestedBranch", build_metadata.tested_channel)
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
 
+  # Boot-time DTC scan (before pandad claims the panda)
+  dtc_path = "/data/dtc_scan.json"
+  if os.path.exists(dtc_path):
+    os.remove(dtc_path)
+
+  if params.get_bool("DtcScanOnBoot"):
+    try:
+      from openpilot.frogpilot.system.dtc_scanner import run_boot_scan
+      run_boot_scan(show_spinner=True)
+    except Exception:
+      cloudlog.exception("dtc boot scan failed")
+
   # set dongle id
   reg_res = register(show_spinner=True)
   if reg_res:
@@ -184,6 +196,13 @@ def manager_thread() -> None:
     if started and not started_prev:
       if not frogpilot_toggles.force_onroad:
         params.clear_all(ParamKeyType.CLEAR_ON_ONROAD_TRANSITION)
+
+      # Move DTC scan results to segment 0
+      try:
+        from openpilot.frogpilot.system.dtc_scanner import move_results_to_route
+        move_results_to_route(params)
+      except Exception:
+        pass
 
       # FrogPilot variables
       frogpilot_toggles = get_frogpilot_toggles()
