@@ -178,10 +178,13 @@ class Uploader:
     else:
       progress = 1.0
 
-    # Drive time from currently-uploading segment dir
+    # Drive time from currently-uploading segment dir (fall back to last
+    # uploaded file since _current_uploading is cleared after each upload
+    # and compute_upload_status is called after step() returns)
     drive_time = 0.0
-    if self._current_uploading:
-      logdir = self._current_uploading.split("/")[0]
+    uploading_key = self._current_uploading or self._last_upload_file
+    if uploading_key:
+      logdir = uploading_key.split("/")[0]
       if logdir[0:1].isdigit():
         segment_dir = os.path.join(self.root, logdir)
         try:

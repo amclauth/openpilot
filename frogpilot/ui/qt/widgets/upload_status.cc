@@ -97,17 +97,16 @@ void UploadStatusWidget::refresh() {
     progress_bar->setValue(1000);
     detail_label->setText("");
   } else {
-    int uploaded = batch_size - remaining;
-    QString count_text = QString::number(uploaded) + "/" +
-      QString::number(batch_size) + " segments";
-    progress_label->setText(count_text);
-    progress_bar->setValue(static_cast<int>(progress * 1000));
-
     if (drive_time > 0) {
       QDateTime dt = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(drive_time));
-      detail_label->setText("Uploading: " + dt.toString("MMM d, h:mm AP") + " drive");
+      progress_label->setText(dt.toString("yyyy-MM-dd HH:mm"));
     } else {
-      detail_label->setText("");
+      progress_label->setText("Uploading...");
     }
+    progress_bar->setValue(static_cast<int>(progress * 1000));
+
+    int uploaded = batch_size - remaining;
+    detail_label->setText(QString::number(uploaded) + "/" +
+      QString::number(batch_size) + " segments");
   }
 }
