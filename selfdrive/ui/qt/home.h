@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QStackedLayout>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QWidget>
 
@@ -48,6 +49,7 @@ private:
   // FrogPilot variables
   ElidedLabel* date;
   ExperimentalModeButton *experimental_mode_btn;
+  QStackedWidget *upload_stack;
   UploadStatusWidget *upload_status;
 };
 

@@ -218,16 +218,14 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
     QObject::connect(experimental_mode_btn, &ExperimentalModeButton::openSettings, this, &OffroadHome::openSettings);
     right_column->addWidget(experimental_mode_btn, 1);
 
-    bool custom_upload = params.getBool("CustomUploadEnabled");
-    if (custom_upload) {
-      upload_status = new UploadStatusWidget;
-      right_column->addWidget(upload_status, 1);
-    } else {
-      upload_status = nullptr;
-      SetupWidget *setup_widget = new SetupWidget;
-      QObject::connect(setup_widget, &SetupWidget::openSettings, this, &OffroadHome::openSettings);
-      right_column->addWidget(setup_widget, 1);
-    }
+    upload_stack = new QStackedWidget(this);
+    SetupWidget *setup_widget = new SetupWidget;
+    QObject::connect(setup_widget, &SetupWidget::openSettings, this, &OffroadHome::openSettings);
+    upload_stack->addWidget(setup_widget);     // index 0: SetupWidget
+    upload_status = new UploadStatusWidget;
+    upload_stack->addWidget(upload_status);     // index 1: UploadStatusWidget
+    upload_stack->setCurrentIndex(params.getBool("CustomUploadEnabled") ? 1 : 0);
+    right_column->addWidget(upload_stack, 1);
 
     home_layout->addWidget(right_widget, 1);
   }
@@ -305,7 +303,9 @@ void OffroadHome::refresh() {
     frogpilotUIState()->frogpilot_toggles.value("openpilot_longitudinal_active").toBool()
   );
 
-  if (upload_status) {
+  bool custom_upload = params.getBool("CustomUploadEnabled");
+  upload_stack->setCurrentIndex(custom_upload ? 1 : 0);
+  if (custom_upload) {
     upload_status->refresh();
   }
 }

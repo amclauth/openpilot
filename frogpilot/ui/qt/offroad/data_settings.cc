@@ -1,5 +1,9 @@
 #include <sys/xattr.h>
 
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+
 #include "frogpilot/ui/qt/offroad/data_settings.h"
 
 FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPilotListWidget(parent), parent(parent) {
@@ -34,11 +38,13 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
     std::string existing = params.get("CustomUploadServer");
     QString input = InputDialog::getText(tr("Enter upload endpoint URL"), this, tr("Upload Endpoint"), false, -1,
                                          QString::fromStdString(existing)).trimmed();
+    if (input.isNull()) {
+      return;  // Cancelled
+    }
     if (!input.isEmpty()) {
       params.put("CustomUploadServer", input.toStdString());
       uploadEndpointButton->setValue(input);
-    } else if (input.isEmpty() && !existing.empty()) {
-      // User cleared the field
+    } else {
       params.remove("CustomUploadServer");
       uploadEndpointButton->setValue(tr("Not set"));
     }
@@ -51,17 +57,84 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
   std::string currentToken = params.get("CustomUploadToken");
   authTokenButton->setValue(currentToken.empty() ? tr("Not set") : QString::fromUtf8("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"));
   QObject::connect(authTokenButton, &ButtonControl::clicked, [=]() {
-    std::string existing = params.get("CustomUploadToken");
     QString input = InputDialog::getText(tr("Enter auth token"), this, tr("Auth Token"), true).trimmed();
+    if (input.isNull()) {
+      return;  // Cancelled
+    }
     if (!input.isEmpty()) {
       params.put("CustomUploadToken", input.toStdString());
       authTokenButton->setValue(QString::fromUtf8("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"));
-    } else if (input.isEmpty() && !existing.empty()) {
+    } else {
       params.remove("CustomUploadToken");
       authTokenButton->setValue(tr("Not set"));
     }
   });
   uploadServerList->addItem(authTokenButton);
+
+  // Test Connection button
+  ButtonControl *testConnectionButton = new ButtonControl(tr("Test Connection"), tr("TEST"),
+    tr("Tests connectivity by sending a GET request to your server's /health endpoint. "
+       "Verifies both that the server is reachable and that your auth token is accepted."));
+  QObject::connect(testConnectionButton, &ButtonControl::clicked, [=]() {
+    std::string url = params.get("CustomUploadServer");
+    if (url.empty()) {
+      testConnectionButton->setValue(tr("Set an endpoint first"));
+      QTimer::singleShot(3000, testConnectionButton, [=]() {
+        testConnectionButton->setValue("");
+      });
+      return;
+    }
+
+    QUrl uploadUrl(QString::fromStdString(url));
+    QUrl healthUrl;
+    healthUrl.setScheme(uploadUrl.scheme());
+    healthUrl.setAuthority(uploadUrl.authority());
+    healthUrl.setPath("/health");
+
+    QNetworkRequest request(healthUrl);
+    std::string token = params.get("CustomUploadToken");
+    if (!token.empty()) {
+      request.setRawHeader("Authorization",
+        QByteArray("Bearer ") + QByteArray::fromStdString(token));
+    }
+
+    testConnectionButton->setEnabled(false);
+    testConnectionButton->setValue(tr("Testing..."));
+
+    QNetworkAccessManager *nam = new QNetworkAccessManager(testConnectionButton);
+    QTimer *timeout = new QTimer(nam);
+    timeout->setSingleShot(true);
+    timeout->setInterval(5000);
+
+    QNetworkReply *reply = nam->get(request);
+
+    QObject::connect(timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
+    QObject::connect(reply, &QNetworkReply::finished, testConnectionButton,
+      [=]() {
+        QString result;
+        if (reply->error() == QNetworkReply::NoError) {
+          result = tr("OK");
+        } else if (reply->attribute(
+            QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401) {
+          result = tr("Auth failed");
+        } else if (reply->error() == QNetworkReply::OperationCanceledError) {
+          result = tr("Timed out");
+        } else {
+          result = tr("Failed: %1").arg(reply->errorString());
+        }
+        testConnectionButton->setValue(result);
+        testConnectionButton->setEnabled(true);
+        reply->deleteLater();
+        nam->deleteLater();
+
+        QTimer::singleShot(3000, testConnectionButton, [=]() {
+          testConnectionButton->setValue("");
+        });
+      });
+
+    timeout->start();
+  });
+  uploadServerList->addItem(testConnectionButton);
 
   // Custom Upload Server toggle with MANAGE button
   FrogPilotManageControl *uploadServerToggle = new FrogPilotManageControl(
