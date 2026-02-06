@@ -93,9 +93,13 @@ class Uploader:
     self.immediate_folders = ["crash/", "boot/"]
     self.immediate_priority = {"qlog": 0, "qlog.bz2": 0, "qcamera.ts": 1}
 
-    self.custom_server = self.params.get(
-      "CustomUploadServer", encoding="utf8"
-    )
+    custom_enabled = self.params.get_bool("CustomUploadEnabled")
+    if custom_enabled:
+      self.custom_server = self.params.get(
+        "CustomUploadServer", encoding="utf8"
+      )
+    else:
+      self.custom_server = None
     self.custom_token = self.params.get(
       "CustomUploadToken", encoding="utf8"
     )
@@ -451,9 +455,13 @@ def main(exit_event: threading.Event = None) -> None:
     # Update FrogPilot variables
     if sm['frogpilotPlan'].togglesUpdated:
       frogpilot_toggles = get_frogpilot_toggles()
-      uploader.custom_server = params.get(
-        "CustomUploadServer", encoding="utf8"
-      )
+      custom_enabled = params.get_bool("CustomUploadEnabled")
+      if custom_enabled:
+        uploader.custom_server = params.get(
+          "CustomUploadServer", encoding="utf8"
+        )
+      else:
+        uploader.custom_server = None
       uploader.custom_token = params.get(
         "CustomUploadToken", encoding="utf8"
       )

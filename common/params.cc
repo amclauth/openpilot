@@ -288,6 +288,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"CustomSignals", PERSISTENT},
     {"CustomSounds", PERSISTENT},
     {"CustomUI", PERSISTENT},
+    {"CustomUploadEnabled", PERSISTENT},
     {"CustomUploadServer", PERSISTENT},
     {"CustomUploadToken", PERSISTENT | DONT_LOG},
     {"DebugMode", CLEAR_ON_OFFROAD_TRANSITION},

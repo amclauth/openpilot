@@ -218,8 +218,8 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
     QObject::connect(experimental_mode_btn, &ExperimentalModeButton::openSettings, this, &OffroadHome::openSettings);
     right_column->addWidget(experimental_mode_btn, 1);
 
-    std::string custom_server = params.get("CustomUploadServer");
-    if (!custom_server.empty()) {
+    bool custom_upload = params.getBool("CustomUploadEnabled");
+    if (custom_upload) {
       upload_status = new UploadStatusWidget;
       right_column->addWidget(upload_status, 1);
     } else {

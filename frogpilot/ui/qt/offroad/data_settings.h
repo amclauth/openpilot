@@ -8,7 +8,12 @@ class FrogPilotDataPanel : public FrogPilotListWidget {
 public:
   explicit FrogPilotDataPanel(FrogPilotSettingsWindow *parent);
 
+signals:
+  void openSubPanel();
+
 private:
+  bool forceOpenDescriptions;
+
   FrogPilotSettingsWindow *parent;
 
   Params params;

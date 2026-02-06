@@ -6,7 +6,7 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
   QJsonObject shownDescriptions = QJsonDocument::fromJson(QString::fromStdString(params.get("ShownToggleDescriptions")).toUtf8()).object();
   QString className = this->metaObject()->className();
 
-  bool forceOpenDescriptions = false;
+  forceOpenDescriptions = false;
   if (!shownDescriptions.value(className).toBool(false)) {
     forceOpenDescriptions = true;
     shownDescriptions.insert(className, true);
@@ -19,6 +19,65 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
   FrogPilotListWidget *dataMainList = new FrogPilotListWidget(this);
   ScrollView *dataMainPanel = new ScrollView(dataMainList, this);
   dataLayout->addWidget(dataMainPanel);
+
+  // Upload server sub-panel
+  FrogPilotListWidget *uploadServerList = new FrogPilotListWidget(this);
+  ScrollView *uploadServerPanel = new ScrollView(uploadServerList, this);
+  dataLayout->addWidget(uploadServerPanel);
+
+  // Upload Endpoint button
+  ButtonControl *uploadEndpointButton = new ButtonControl(tr("Upload Endpoint"), tr("SET"),
+    tr("<b>Full URL including protocol, host, port, and path.</b><br>Example: http://192.168.1.10:60018/upload/"));
+  std::string currentUrl = params.get("CustomUploadServer");
+  uploadEndpointButton->setValue(currentUrl.empty() ? tr("Not set") : QString::fromStdString(currentUrl));
+  QObject::connect(uploadEndpointButton, &ButtonControl::clicked, [=]() {
+    std::string existing = params.get("CustomUploadServer");
+    QString input = InputDialog::getText(tr("Enter upload endpoint URL"), this, tr("Upload Endpoint"), false, -1,
+                                         QString::fromStdString(existing)).trimmed();
+    if (!input.isEmpty()) {
+      params.put("CustomUploadServer", input.toStdString());
+      uploadEndpointButton->setValue(input);
+    } else if (input.isEmpty() && !existing.empty()) {
+      // User cleared the field
+      params.remove("CustomUploadServer");
+      uploadEndpointButton->setValue(tr("Not set"));
+    }
+  });
+  uploadServerList->addItem(uploadEndpointButton);
+
+  // Auth Token button
+  ButtonControl *authTokenButton = new ButtonControl(tr("Auth Token"), tr("SET"),
+    tr("<b>Bearer token sent in the Authorization header.</b><br>Leave empty for no authentication."));
+  std::string currentToken = params.get("CustomUploadToken");
+  authTokenButton->setValue(currentToken.empty() ? tr("Not set") : QString::fromUtf8("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"));
+  QObject::connect(authTokenButton, &ButtonControl::clicked, [=]() {
+    std::string existing = params.get("CustomUploadToken");
+    QString input = InputDialog::getText(tr("Enter auth token"), this, tr("Auth Token"), true).trimmed();
+    if (!input.isEmpty()) {
+      params.put("CustomUploadToken", input.toStdString());
+      authTokenButton->setValue(QString::fromUtf8("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"));
+    } else if (input.isEmpty() && !existing.empty()) {
+      params.remove("CustomUploadToken");
+      authTokenButton->setValue(tr("Not set"));
+    }
+  });
+  uploadServerList->addItem(authTokenButton);
+
+  // Custom Upload Server toggle with MANAGE button
+  FrogPilotManageControl *uploadServerToggle = new FrogPilotManageControl(
+    "CustomUploadEnabled", tr("Custom Upload Server"),
+    tr("<b>Upload driving data to a personal server</b> instead of comma.ai."),
+    "");
+  QObject::connect(uploadServerToggle, &FrogPilotManageControl::manageButtonClicked, [dataLayout, uploadServerPanel]() {
+    dataLayout->setCurrentWidget(uploadServerPanel);
+  });
+  QObject::connect(uploadServerToggle, &FrogPilotManageControl::manageButtonClicked, [this]() {
+    emit openSubPanel();
+  });
+  if (forceOpenDescriptions) {
+    uploadServerToggle->showDescription();
+  }
+  dataMainList->addItem(uploadServerToggle);
 
   ButtonControl *deleteDrivingDataButton = new ButtonControl(tr("Delete Driving Data"), tr("DELETE"), tr("<b>Delete all stored driving footage and data</b> to free up space and clear private information."));
   QObject::connect(deleteDrivingDataButton, &ButtonControl::clicked, [=]() {
@@ -594,4 +653,8 @@ FrogPilotDataPanel::FrogPilotDataPanel(FrogPilotSettingsWindow *parent) : FrogPi
     toggleBackupButton->showDescription();
   }
   dataMainList->addItem(toggleBackupButton);
+
+  QObject::connect(parent, &FrogPilotSettingsWindow::closeSubPanel, [dataLayout, dataMainPanel] {
+    dataLayout->setCurrentWidget(dataMainPanel);
+  });
 }
