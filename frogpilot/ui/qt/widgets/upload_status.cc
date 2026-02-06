@@ -79,6 +79,7 @@ void UploadStatusWidget::refresh() {
   int total = obj["total"].toInt();
   double progress = obj["progress"].toDouble();
   QString state = obj["state"].toString();
+  bool connected = obj["connected"].toBool();
   QString server_host = obj["server_host"].toString();
 
   // Update host label text from status JSON
@@ -86,26 +87,30 @@ void UploadStatusWidget::refresh() {
     host_label->setText(server_host);
   }
 
-  // Determine display state and host color
-  QString status_text;
+  // Host color: green if server reachable, red on error, grey otherwise
   QString host_color;
-
-  if (uploaded == total && total > 0) {
-    // SYNCED takes priority regardless of state
-    status_text = "SYNCED: " + QString::number(uploaded) + "/" + QString::number(total);
-    host_color = "#178643";
-  } else if (state == "uploading") {
-    status_text = "UPLOADING: " + QString::number(uploaded) + "/" + QString::number(total);
+  if (connected) {
     host_color = "#178643";
   } else if (state == "error") {
-    status_text = "ERROR: " + QString::number(uploaded) + "/" + QString::number(total);
     host_color = "#E22C2C";
-  } else if (state == "no_network") {
-    status_text = "IDLE: " + QString::number(uploaded) + "/" + QString::number(total);
-    host_color = "#A0A0A0";
   } else {
-    status_text = "IDLE: " + QString::number(uploaded) + "/" + QString::number(total);
     host_color = "#A0A0A0";
+  }
+
+  // Status text: only show UPLOADING/ERROR/SYNCED when segments exist
+  QString status_text;
+  QString counts = QString::number(uploaded) + "/" + QString::number(total);
+
+  if (total == 0) {
+    status_text = "IDLE: 0/0";
+  } else if (uploaded == total) {
+    status_text = "SYNCED: " + counts;
+  } else if (state == "uploading") {
+    status_text = "UPLOADING: " + counts;
+  } else if (state == "error") {
+    status_text = "ERROR: " + counts;
+  } else {
+    status_text = "IDLE: " + counts;
   }
 
   progress_label->setText(status_text);
