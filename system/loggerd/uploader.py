@@ -290,8 +290,8 @@ class Uploader:
       if logdir[0:1].isdigit():
         segment_dir = os.path.join(self.root, logdir)
         try:
-          ctime = int(os.path.getmtime(segment_dir))
-          headers["X-Drive-Time"] = str(ctime)
+          mtime = int(os.path.getmtime(segment_dir))
+          headers["X-Drive-Time"] = str(mtime)
         except OSError:
           pass
 
