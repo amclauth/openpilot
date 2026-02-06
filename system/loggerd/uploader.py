@@ -210,13 +210,14 @@ class Uploader:
       if self.custom_token:
         headers["Authorization"] = f"Bearer {self.custom_token}"
 
-      # Send directory creation time for segment dirs so the server
-      # can use date-based folder names
+      # Send directory modification time for segment dirs so the server
+      # can use date-based folder names. mtime is stable after segment
+      # recording completes (unlike ctime which changes on metadata ops).
       logdir = key.split("/")[0]
       if logdir[0:1].isdigit():
         segment_dir = os.path.join(self.root, logdir)
         try:
-          ctime = int(os.path.getctime(segment_dir))
+          ctime = int(os.path.getmtime(segment_dir))
           headers["X-Drive-Time"] = str(ctime)
         except OSError:
           pass
