@@ -4,6 +4,10 @@ Standalone module (not a daemon). Runs during manager_init() before pandad
 starts, when ignition is on and all ECUs are awake. Uses the panda's USB
 interface directly with UdsClient for proper ISO-TP handling.
 
+Only DTCs with actionable failure status are persisted (confirmed, failed,
+or warning indicator). DTCs that are merely "test not completed" are
+discarded to reduce noise.
+
 Results are cached in /data/dtc_scan.json and optionally copied to segment 0
 of the current route once driving begins.
 """
@@ -38,6 +42,18 @@ SCAN_TIMEOUT_S = 30
 DISCOVERY_WAIT_S = 2.0
 DTC_RESULT_PATH = "/data/dtc_scan.json"
 TMP_RESULT_PATH = "/tmp/dtc_scan.json"
+
+# DTC status bits that indicate an actual fault worth persisting.
+# Everything else (TEST_NOT_COMPLETED_*, PENDING_DTC alone) is noise.
+ACTIONABLE_STATUS = {
+    "CONFIRMED_DTC",
+    "TEST_FAILED_THIS_OPERATION_CYCLE",
+    "TEST_FAILED_SINCE_LAST_CLEAR",
+    "WARNING_INDICATOR_REQUESTED",
+}
+
+# NRC 0x7F = serviceNotSupportedInActiveSession
+NRC_SERVICE_NOT_SUPPORTED_IN_SESSION = 0x7F
 
 # Standard OBD-II ECU TX addresses and names
 KNOWN_ECU_NAMES = {
@@ -118,8 +134,42 @@ def discover_ecus(panda: Panda, bus: int) -> list[int]:
     return sorted(tx_addrs)
 
 
+def _read_dtcs(uds: UdsClient, name: str) -> list[dict]:
+    """Issue a ReadDTCInformation request and parse the response.
+
+    Returns list of all DTC dicts (unfiltered).
+    """
+    data = uds.read_dtc_information(
+        DTC_REPORT_TYPE.DTC_BY_STATUS_MASK,
+        DTC_STATUS_MASK_TYPE.ALL,
+    )
+
+    if data is None or len(data) < 1:
+        logger.info("  %s: no DTC data returned", name)
+        return []
+
+    dtcs: list[dict] = []
+    # data[0] = status availability mask
+    # data[1:] = 4-byte records: 3-byte DTC + 1-byte status
+    i = 1
+    while i + 3 <= len(data):
+        dtc_bytes = data[i:i + 3]
+        dtc_status = data[i + 3]
+        dtc_str = get_dtc_num_as_str(dtc_bytes)
+        status_names = get_dtc_status_names(dtc_status)
+        dtcs.append({"code": dtc_str, "status": status_names})
+        logger.info("  %s: DTC %s [%s]", name, dtc_str, " ".join(status_names))
+        i += 4
+
+    return dtcs
+
+
 def scan_ecu_dtcs(panda: Panda, tx_addr: int, bus: int) -> dict:
     """Query a single ECU for DTCs using UdsClient.
+
+    Tries to read DTCs in the default session first (non-disruptive).
+    Falls back to extended diagnostic session only if the ECU rejects
+    the request with NRC 0x7F (serviceNotSupportedInActiveSession).
 
     Returns:
         Dict with keys: name, address, dtcs, error, supports_dtc
@@ -136,32 +186,27 @@ def scan_ecu_dtcs(panda: Panda, tx_addr: int, bus: int) -> dict:
 
     try:
         uds = UdsClient(panda, tx_addr, bus=bus, timeout=1.0)
-        uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
-        data = uds.read_dtc_information(
-            DTC_REPORT_TYPE.DTC_BY_STATUS_MASK,
-            DTC_STATUS_MASK_TYPE.ALL,
-        )
 
-        if data is None or len(data) < 1:
-            logger.info("  %s: no DTC data returned", name)
-            return result
+        try:
+            all_dtcs = _read_dtcs(uds, name)
+        except NegativeResponseError as e:
+            if e.error_code == NRC_SERVICE_NOT_SUPPORTED_IN_SESSION:
+                logger.info("  %s: default session rejected, trying extended", name)
+                uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
+                all_dtcs = _read_dtcs(uds, name)
+            else:
+                raise
 
-        # data[0] = status availability mask
-        # data[1:] = 4-byte records: 3-byte DTC + 1-byte status
-        i = 1
-        while i + 3 <= len(data):
-            dtc_bytes = data[i:i + 3]
-            dtc_status = data[i + 3]
-            dtc_str = get_dtc_num_as_str(dtc_bytes)
-            status_names = get_dtc_status_names(dtc_status)
-            result["dtcs"].append({
-                "code": dtc_str,
-                "status": status_names,
-            })
-            logger.info("  %s: DTC %s [%s]", name, dtc_str, " ".join(status_names))
-            i += 4
+        # Filter: only keep DTCs with actionable failure status
+        for dtc in all_dtcs:
+            if ACTIONABLE_STATUS.intersection(dtc["status"]):
+                result["dtcs"].append(dtc)
 
-        if not result["dtcs"]:
+        kept = len(result["dtcs"])
+        skipped = len(all_dtcs) - kept
+        if skipped:
+            logger.info("  %s: %d DTCs kept, %d filtered (test-not-completed)", name, kept, skipped)
+        elif not all_dtcs:
             logger.info("  %s: no DTCs stored", name)
 
     except MessageTimeoutError:
@@ -264,7 +309,6 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
             if not scan_addrs:
                 logger.warning("No ECUs responded on any bus")
                 _save_results({
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     "ecus_discovered": 0,
                     "ecus": {},
                     "total_dtcs": 0,
@@ -273,7 +317,6 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
 
         # Scan each ECU for DTCs
         scan_result = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "ecus_discovered": len(scan_addrs),
             "ecus": {},
             "total_dtcs": 0,
@@ -354,11 +397,15 @@ def _save_results(scan_result: dict) -> None:
 
 
 def move_results_to_route(params: Params) -> bool:
-    """Copy DTC scan results from /tmp to segment 0 of the current route.
+    """Copy DTC scan results from /tmp to a locked segment of the current route.
 
     Called from manager_thread() each iteration after onroad transition.
     Returns True once results are successfully copied, False if not ready
-    yet (CurrentRoute not set or segment 0 dir not created by loggerd).
+    yet (CurrentRoute not set or no locked segment exists).
+
+    Targets a segment that still has a .lock file, which guarantees the
+    uploader has not yet processed it. Prefers segment 0 if still locked,
+    otherwise uses whichever segment loggerd is currently writing.
     """
     if not os.path.exists(TMP_RESULT_PATH):
         return True  # Nothing to copy, don't keep retrying
@@ -372,11 +419,24 @@ def move_results_to_route(params: Params) -> bool:
         return False
 
     log_root = Paths.log_root()
-    seg0_dir = Path(log_root) / f"{route_str}--0"
-    if not seg0_dir.is_dir():
+    prefix = f"{route_str}--"
+
+    # Find a segment dir that still has a .lock file (safe from uploader)
+    target_dir = None
+    try:
+        for entry in sorted(Path(log_root).iterdir()):
+            if not entry.is_dir() or not entry.name.startswith(prefix):
+                continue
+            if any(f.suffix == ".lock" for f in entry.iterdir()):
+                target_dir = entry
+                break  # Prefer lowest segment number
+    except OSError:
         return False
 
-    dest = seg0_dir / "dtc_scan.json"
+    if target_dir is None:
+        return False  # No locked segments yet, keep polling
+
+    dest = target_dir / "dtc_scan.json"
     try:
         shutil.copy2(TMP_RESULT_PATH, dest)
         logger.info("DTC results copied to %s", dest)

@@ -51,12 +51,11 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
     QJsonDocument doc = QJsonDocument::fromJson(dtcFile.readAll());
     QJsonObject root = doc.object();
 
-    QString timestamp = root.value("timestamp").toString("unknown");
     int ecusDiscovered = root.value("ecus_discovered").toInt(0);
     int totalDtcs = root.value("total_dtcs").toInt(0);
 
-    QString html = QString("<b>DTC Scan - %1</b><br>%2 ECUs scanned, %3 DTCs found<br>")
-      .arg(timestamp).arg(ecusDiscovered).arg(totalDtcs);
+    QString html = QString("<b>DTC Scan</b><br>%1 ECUs scanned, %2 DTCs found<br>")
+      .arg(ecusDiscovered).arg(totalDtcs);
 
     QJsonObject ecus = root.value("ecus").toObject();
     for (auto it = ecus.begin(); it != ecus.end(); ++it) {
