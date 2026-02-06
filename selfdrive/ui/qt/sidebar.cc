@@ -160,7 +160,7 @@ void Sidebar::updateState(const UIState &s, const FrogPilotUIState &fs) {
 
   if (customUploadEnabled) {
     int free_space = deviceState.getFreeSpacePercent();
-    if (free_space < 10) {
+    if (free_space > 0 && free_space < 10) {
       connectStatus = {{tr("STORAGE"), tr("LOW")}, danger_color};
     } else {
       std::string raw = params.get("UploaderStatus");

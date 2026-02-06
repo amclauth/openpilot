@@ -660,15 +660,18 @@ def main(exit_event: threading.Event = None) -> None:
         # Before first success, stay "idle" (network may not be ready)
         backoff = 5 * 60
 
+      # Pending segments: poll faster regardless of status update timing
+      if uploader._upload_state == "idle" and backoff > 10:
+        status = uploader.compute_upload_status()
+        if status["has_locked"]:
+          uploader._upload_state = "uploading"
+          backoff = 10
+
       # Write upload status for UI widget
       now = time.monotonic()
       if success or (now - uploader._status_update_time >= 10):
         status = uploader.compute_upload_status()
-        # Idle but locked segments exist — poll faster
-        if uploader._upload_state == "idle" and status["has_locked"]:
-          uploader._upload_state = "uploading"
-          backoff = 10
-          status["state"] = "uploading"
+        status["state"] = uploader._upload_state
         uploader.params.put_nonblocking("UploaderStatus", json.dumps(status))
         uploader._status_update_time = now
     else:
