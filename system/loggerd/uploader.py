@@ -28,6 +28,9 @@ NetworkType = log.DeviceState.NetworkType
 UPLOAD_ATTR_NAME = 'user.upload'
 UPLOAD_ATTR_VALUE = b'1'
 CURSOR_FILENAME = "_upload_cursor"
+SWAGLOG_DIR = "/data/log"
+SWAGLOG_CURSOR = "_swaglog_upload_cursor"
+SWAGLOG_MTIME_GATE = 60  # seconds since last write before uploading
 
 MAX_UPLOAD_SIZES = {
   "qlog": 25*1e6,  # can't be too restrictive here since we use qlogs to find
@@ -71,6 +74,8 @@ def listdir_by_creation(d: str) -> list[str]:
 def clear_locks(root: str) -> None:
   for logdir in os.listdir(root):
     path = os.path.join(root, logdir)
+    if not os.path.isdir(path):
+      continue
     try:
       for fname in os.listdir(path):
         if fname.endswith(".lock"):
@@ -109,6 +114,7 @@ class Uploader:
     self._last_upload_file: str = ""
     self._current_uploading: str = ""
     self._last_connected: bool = False
+    self._has_connected: bool = False
     self._status_update_time: float = 0.0
     self._batch_size: int = 0
     self._upload_state: str = "idle"
@@ -149,6 +155,88 @@ class Uploader:
         except OSError:
           return False
     return True
+
+  def _read_swaglog_cursor(self) -> tuple[str, int] | None:
+    """Read swaglog cursor: (filename, size_at_upload)."""
+    try:
+      path = os.path.join(SWAGLOG_DIR, SWAGLOG_CURSOR)
+      with open(path) as f:
+        parts = f.read().strip().split()
+      if len(parts) == 2:
+        return parts[0], int(parts[1])
+    except (OSError, ValueError):
+      pass
+    return None
+
+  def _write_swaglog_cursor(self, filename: str, size: int) -> None:
+    """Atomically write swaglog cursor."""
+    path = os.path.join(SWAGLOG_DIR, SWAGLOG_CURSOR)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+      f.write(f"{filename} {size}")
+    os.replace(tmp, path)
+
+  def next_swaglog_to_upload(self) -> tuple[str, str, str] | None:
+    """Return next swaglog file to upload, or None.
+
+    Uses a cursor tracking (filename, size) to handle re-uploads of
+    files that grew. Gates on mtime > 60s to avoid uploading files
+    still being written to.
+    """
+    try:
+      entries = sorted(
+        f for f in os.listdir(SWAGLOG_DIR) if f.startswith("swaglog.")
+      )
+    except OSError:
+      return None
+    if not entries:
+      return None
+
+    now = time.time()
+    cursor = self._read_swaglog_cursor()
+
+    if cursor:
+      cursor_name, cursor_size = cursor
+      cursor_path = os.path.join(SWAGLOG_DIR, cursor_name)
+
+      # Check if cursor'd file has grown
+      try:
+        st = os.stat(cursor_path)
+      except OSError:
+        st = None
+
+      if st and st.st_size != cursor_size:
+        if now - st.st_mtime > SWAGLOG_MTIME_GATE:
+          # File grew but is quiet — re-upload
+          key = f"swaglog/{cursor_name}"
+          return cursor_name, key, cursor_path
+        else:
+          # Still being written — do nothing this pass
+          return None
+
+      # Cursor file is done, look for files after it
+      try:
+        start_idx = entries.index(cursor_name) + 1
+      except ValueError:
+        start_idx = 0
+    else:
+      start_idx = 0
+
+    # Upload the next file with mtime > gate
+    for name in entries[start_idx:]:
+      fn = os.path.join(SWAGLOG_DIR, name)
+      try:
+        st = os.stat(fn)
+      except OSError:
+        continue
+      if now - st.st_mtime > SWAGLOG_MTIME_GATE:
+        key = f"swaglog/{name}"
+        return name, key, fn
+      else:
+        # Hit the active file — stop
+        break
+
+    return None
 
   def compute_upload_status(self) -> dict:
     """Compute current upload status for the UI widget."""
@@ -265,6 +353,11 @@ class Uploader:
         return name, key, fn
 
     if self.custom_server:
+      # Custom server: swaglogs next (same priority tier as boot/crash)
+      swaglog = self.next_swaglog_to_upload()
+      if swaglog:
+        return swaglog
+
       # Custom server: upload all remaining files
       for name, key, fn in upload_files:
         return name, key, fn
@@ -358,17 +451,22 @@ class Uploader:
       self._last_upload_time = time.time()
       self._last_upload_file = key
       self._last_connected = True
+      self._has_connected = True
 
-      # tag file as uploaded
-      try:
-        setxattr(fn, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
-      except OSError:
-        cloudlog.event("uploader_setxattr_failed", exc=last_exc, key=key, fn=fn, sz=sz)
+      # tag file as uploaded (skip swaglogs — cursor-based, no xattr)
+      if not key.startswith("swaglog/"):
+        try:
+          setxattr(fn, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
+        except OSError:
+          cloudlog.event("uploader_setxattr_failed", exc=last_exc, key=key, fn=fn, sz=sz)
 
       # advance cursor if this segment dir is fully uploaded
       if self.custom_server:
         logdir = key.split("/")[0]
-        if logdir[0:1].isdigit():
+        if logdir == "swaglog":
+          # Advance swaglog cursor with current file size
+          self._write_swaglog_cursor(name, sz)
+        elif logdir[0:1].isdigit():
           dir_path = os.path.join(self.root, logdir)
           if self._is_dir_fully_uploaded(dir_path):
             cursor = self._read_cursor()
@@ -417,6 +515,9 @@ def main(exit_event: threading.Event = None) -> None:
   sm = messaging.SubMaster(['deviceState', 'frogpilotPlan'])
   uploader = Uploader(dongle_id, Paths.log_root())
 
+  # Clear stale status from previous boot so widget doesn't flash ERROR
+  params.remove("UploaderStatus")
+
   backoff = 0.1
 
   # FrogPilot variables
@@ -459,7 +560,9 @@ def main(exit_event: threading.Event = None) -> None:
         uploader._upload_state = "idle"
         backoff = 5 * 60
       else:  # False — upload HTTP failure
-        uploader._upload_state = "error"
+        if uploader._has_connected:
+          uploader._upload_state = "error"
+        # Before first success, stay "idle" (network may not be ready)
         backoff = 5 * 60
 
       # Write upload status for UI widget
