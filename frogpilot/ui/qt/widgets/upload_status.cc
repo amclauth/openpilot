@@ -6,6 +6,9 @@
 #include <QVBoxLayout>
 
 UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
+  // Clear stale status from previous boot before first refresh()
+  params.remove("UploaderStatus");
+
   QVBoxLayout *layout = new QVBoxLayout(this);
   layout->setContentsMargins(50, 50, 50, 50);
 
