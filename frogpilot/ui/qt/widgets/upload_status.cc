@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 #include <QVBoxLayout>
 
 UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
@@ -13,8 +14,18 @@ UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
   header_label->setStyleSheet("font-size: 50px; font-weight: bold;");
   layout->addWidget(header_label);
 
+  // Extract hostname from CustomUploadServer param
   host_label = new QLabel();
   host_label->setStyleSheet("font-size: 36px; color: #A0A0A0;");
+  std::string server_url = params.get("CustomUploadServer");
+  if (!server_url.empty()) {
+    QUrl url(QString::fromStdString(server_url));
+    QString host = url.host();
+    if (url.port() > 0) {
+      host += ":" + QString::number(url.port());
+    }
+    host_label->setText(host);
+  }
   layout->addWidget(host_label);
 
   layout->addStretch(1);
@@ -56,7 +67,6 @@ UploadStatusWidget::UploadStatusWidget(QWidget *parent) : QFrame(parent) {
 void UploadStatusWidget::refresh() {
   std::string raw = params.get("UploaderStatus");
   if (raw.empty()) {
-    host_label->setText("");
     progress_label->setText("Waiting for uploader...");
     progress_bar->setValue(0);
     detail_label->setText("");
@@ -70,19 +80,26 @@ void UploadStatusWidget::refresh() {
 
   QJsonObject obj = doc.object();
   int remaining = obj["segments_remaining"].toInt();
+  int batch_size = obj["batch_size"].toInt();
   double progress = obj["progress"].toDouble();
   double drive_time = obj["drive_time"].toDouble();
-  QString server_host = obj["server_host"].toString();
+  bool connected = obj["connected"].toBool();
 
-  host_label->setText(server_host);
+  // Hostname color: grey (initial), green (connected), red (disconnected)
+  if (obj.contains("connected")) {
+    host_label->setStyleSheet(connected
+      ? "font-size: 36px; color: #178643;"
+      : "font-size: 36px; color: #E22C2C;");
+  }
 
   if (remaining == 0) {
     progress_label->setText("All synced");
     progress_bar->setValue(1000);
     detail_label->setText("");
   } else {
-    QString count_text = QString::number(remaining) +
-      (remaining == 1 ? " segment remaining" : " segments remaining");
+    int uploaded = batch_size - remaining;
+    QString count_text = QString::number(uploaded) + "/" +
+      QString::number(batch_size) + " segments";
     progress_label->setText(count_text);
     progress_bar->setValue(static_cast<int>(progress * 1000));
 
