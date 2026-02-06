@@ -213,6 +213,16 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
     panda = None
 
     try:
+        # Open panda first for ignition check (covers both paths)
+        panda = Panda()
+        panda.set_safety_mode(Panda.SAFETY_ELM327)
+
+        # Skip scan if car is not on (USB power only)
+        health = panda.health()
+        if not health.get("ignition_line", False) and not health.get("ignition_can", False):
+            logger.info("Ignition off, skipping DTC scan")
+            return
+
         # Load ECU cache
         cache_raw = params.get("DtcEcuMap")
         ecu_cache = json.loads(cache_raw) if cache_raw else None
@@ -239,9 +249,6 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
                 spinner = Spinner()
                 spinner.update("Scanning vehicle ECUs...")
 
-            panda = Panda()
-            panda.set_safety_mode(Panda.SAFETY_ELM327)
-
             # Try bus 0 first (where OBD-II is typically muxed)
             obd_bus = 1 if panda.has_obd() else 0
             scan_addrs = discover_ecus(panda, obd_bus)
@@ -263,11 +270,6 @@ def _run_scan(params: Params, show_spinner: bool) -> None:
                     "total_dtcs": 0,
                 })
                 return
-
-        # Open panda if not already open
-        if panda is None:
-            panda = Panda()
-            panda.set_safety_mode(Panda.SAFETY_ELM327)
 
         # Scan each ECU for DTCs
         scan_result = {
@@ -351,32 +353,34 @@ def _save_results(scan_result: dict) -> None:
         logger.exception("Failed to write results to %s", DTC_RESULT_PATH)
 
 
-def move_results_to_route(params: Params) -> None:
+def move_results_to_route(params: Params) -> bool:
     """Copy DTC scan results from /tmp to segment 0 of the current route.
 
-    Called from manager_thread() when driving starts (started transitions
-    to True). Copies from /tmp/dtc_scan.json to avoid reading stale data.
+    Called from manager_thread() each iteration after onroad transition.
+    Returns True once results are successfully copied, False if not ready
+    yet (CurrentRoute not set or segment 0 dir not created by loggerd).
     """
     if not os.path.exists(TMP_RESULT_PATH):
-        return
+        return True  # Nothing to copy, don't keep retrying
 
     current_route = params.get("CurrentRoute")
     if not current_route:
-        return
+        return False
 
     route_str = current_route.decode("utf-8").strip()
     if not route_str:
-        return
+        return False
 
     log_root = Paths.log_root()
     seg0_dir = Path(log_root) / f"{route_str}--0"
     if not seg0_dir.is_dir():
-        logger.warning("Segment 0 dir does not exist: %s", seg0_dir)
-        return
+        return False
 
     dest = seg0_dir / "dtc_scan.json"
     try:
         shutil.copy2(TMP_RESULT_PATH, dest)
         logger.info("DTC results copied to %s", dest)
+        return True
     except OSError:
         logger.exception("Failed to copy DTC results to %s", dest)
+        return True  # Don't retry on write errors

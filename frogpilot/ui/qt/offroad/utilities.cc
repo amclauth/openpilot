@@ -22,6 +22,11 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
   if (forceOpenDescriptions) {
     dtcScanToggle->showDescription();
   }
+  QObject::connect(dtcScanToggle, &ToggleControl::toggleFlipped, [this](bool state) {
+    if (!state) {
+      params.remove("DtcEcuMap");
+    }
+  });
   addItem(dtcScanToggle);
 
   ButtonControl *dtcResultsButton = new ButtonControl(tr("DTC Scan Results"), tr("VIEW"),

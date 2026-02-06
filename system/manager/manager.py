@@ -104,10 +104,6 @@ def manager_init() -> None:
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
 
   # Boot-time DTC scan (before pandad claims the panda)
-  dtc_path = "/data/dtc_scan.json"
-  if os.path.exists(dtc_path):
-    os.remove(dtc_path)
-
   if params.get_bool("DtcScanOnBoot"):
     try:
       from openpilot.frogpilot.system.dtc_scanner import run_boot_scan
@@ -181,6 +177,7 @@ def manager_thread() -> None:
   )
 
   started_prev = False
+  pending_dtc_copy = False
 
   # FrogPilot variables
   frogpilot_toggles = get_frogpilot_toggles()
@@ -197,12 +194,8 @@ def manager_thread() -> None:
       if not frogpilot_toggles.force_onroad:
         params.clear_all(ParamKeyType.CLEAR_ON_ONROAD_TRANSITION)
 
-      # Move DTC scan results to segment 0
-      try:
-        from openpilot.frogpilot.system.dtc_scanner import move_results_to_route
-        move_results_to_route(params)
-      except Exception:
-        pass
+      # Defer DTC archival until loggerd creates segment 0
+      pending_dtc_copy = True
 
       # FrogPilot variables
       frogpilot_toggles = get_frogpilot_toggles()
@@ -219,6 +212,15 @@ def manager_thread() -> None:
       write_onroad_params(started, params)
 
     started_prev = started
+
+    # Poll for DTC archival until segment 0 directory exists
+    if started and pending_dtc_copy:
+      try:
+        from openpilot.frogpilot.system.dtc_scanner import move_results_to_route
+        if move_results_to_route(params):
+          pending_dtc_copy = False
+      except Exception:
+        pending_dtc_copy = False
 
     ensure_running(
       managed_processes.values(), started, params=params, CP=sm['carParams'],
