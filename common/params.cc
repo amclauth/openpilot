@@ -567,6 +567,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"UpdateSpeedLimitsStatus", CLEAR_ON_MANAGER_START},
     {"UpdateTinygrad", CLEAR_ON_MANAGER_START},
     {"UpdateWheelImage", CLEAR_ON_MANAGER_START},
+    {"UploaderStatus", CLEAR_ON_MANAGER_START},
     {"UseActiveTheme", CLEAR_ON_MANAGER_START},
     {"UseKonikServer", PERSISTENT},
     {"UseSI", PERSISTENT},

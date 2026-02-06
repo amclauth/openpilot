@@ -15,6 +15,7 @@
 
 #include "frogpilot/ui/qt/widgets/drive_stats.h"
 #include "frogpilot/ui/qt/widgets/model_reviewer.h"
+#include "frogpilot/ui/qt/widgets/upload_status.h"
 
 // HomeWindow: the container for the offroad and onroad UIs
 
@@ -217,9 +218,16 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
     QObject::connect(experimental_mode_btn, &ExperimentalModeButton::openSettings, this, &OffroadHome::openSettings);
     right_column->addWidget(experimental_mode_btn, 1);
 
-    SetupWidget *setup_widget = new SetupWidget;
-    QObject::connect(setup_widget, &SetupWidget::openSettings, this, &OffroadHome::openSettings);
-    right_column->addWidget(setup_widget, 1);
+    std::string custom_server = params.get("CustomUploadServer");
+    if (!custom_server.empty()) {
+      upload_status = new UploadStatusWidget;
+      right_column->addWidget(upload_status, 1);
+    } else {
+      upload_status = nullptr;
+      SetupWidget *setup_widget = new SetupWidget;
+      QObject::connect(setup_widget, &SetupWidget::openSettings, this, &OffroadHome::openSettings);
+      right_column->addWidget(setup_widget, 1);
+    }
 
     home_layout->addWidget(right_widget, 1);
   }
@@ -296,4 +304,8 @@ void OffroadHome::refresh() {
   experimental_mode_btn->setVisible(
     frogpilotUIState()->frogpilot_toggles.value("openpilot_longitudinal_active").toBool()
   );
+
+  if (upload_status) {
+    upload_status->refresh();
+  }
 }

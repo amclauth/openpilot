@@ -10,6 +10,7 @@ import time
 import traceback
 import datetime
 from typing import BinaryIO
+from urllib.parse import urlparse
 from collections.abc import Iterator
 
 from cereal import log
@@ -99,6 +100,14 @@ class Uploader:
       "CustomUploadToken", encoding="utf8"
     )
 
+    # Upload status tracking
+    self._last_upload_time: float = 0.0
+    self._last_upload_file: str = ""
+    self._current_uploading: str = ""
+    self._last_connected: bool = False
+    self._status_update_time: float = 0.0
+    self._batch_size: int = 0
+
   def _read_cursor(self) -> str | None:
     """Read the upload cursor (last fully-uploaded segment dir name)."""
     try:
@@ -134,6 +143,70 @@ class Uploader:
         except OSError:
           return False
     return True
+
+  def compute_upload_status(self) -> dict:
+    """Compute current upload status for the UI widget."""
+    cursor = self._read_cursor()
+    cursor_sort = get_directory_sort(cursor) if cursor else None
+
+    segments_remaining = 0
+    for logdir in listdir_by_creation(self.root):
+      if not logdir[0:1].isdigit():
+        continue
+      if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
+        continue
+      path = os.path.join(self.root, logdir)
+      try:
+        names = os.listdir(path)
+      except OSError:
+        continue
+      if any(name.endswith(".lock") for name in names):
+        continue
+      if not self._is_dir_fully_uploaded(path):
+        segments_remaining += 1
+
+    # Batch tracking for progress bar
+    if self._batch_size == 0 and segments_remaining > 0:
+      self._batch_size = segments_remaining
+    elif segments_remaining > self._batch_size:
+      self._batch_size = segments_remaining
+    elif segments_remaining == 0:
+      self._batch_size = 0
+
+    if self._batch_size > 0:
+      progress = (self._batch_size - segments_remaining) / self._batch_size
+    else:
+      progress = 1.0
+
+    # Drive time from currently-uploading segment dir
+    drive_time = 0.0
+    if self._current_uploading:
+      logdir = self._current_uploading.split("/")[0]
+      if logdir[0:1].isdigit():
+        segment_dir = os.path.join(self.root, logdir)
+        try:
+          drive_time = os.path.getmtime(segment_dir)
+        except OSError:
+          pass
+
+    # Server host
+    server_host = ""
+    if self.custom_server:
+      parsed = urlparse(self.custom_server)
+      server_host = parsed.hostname or ""
+      if parsed.port:
+        server_host += f":{parsed.port}"
+
+    return {
+      "segments_remaining": segments_remaining,
+      "batch_size": self._batch_size,
+      "progress": progress,
+      "drive_time": drive_time,
+      "last_upload_time": self._last_upload_time,
+      "uploading": self._current_uploading,
+      "connected": self._last_connected,
+      "server_host": server_host,
+    }
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes", encoding="utf8")
@@ -256,6 +329,7 @@ class Uploader:
       cloudlog.exception("upload: getsize failed")
       return False
 
+    self._current_uploading = key
     cloudlog.event("upload_start", key=key, fn=fn, sz=sz, network_type=network_type, metered=metered)
 
     last_exc = None
@@ -288,9 +362,14 @@ class Uploader:
         success = True
       else:
         success = False
+        self._last_connected = False
         cloudlog.event("upload_failed", stat=stat, exc=last_exc, key=key, fn=fn, sz=sz, network_type=network_type, metered=metered)
 
     if success:
+      self._last_upload_time = time.time()
+      self._last_upload_file = key
+      self._last_connected = True
+
       # tag file as uploaded
       try:
         setxattr(fn, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
@@ -308,6 +387,7 @@ class Uploader:
             if not cursor_sort or get_directory_sort(logdir) > cursor_sort:
               self._write_cursor(logdir)
 
+    self._current_uploading = ""
     return success
 
 
@@ -364,6 +444,17 @@ def main(exit_event: threading.Event = None) -> None:
       continue
 
     success = uploader.step(sm['deviceState'].networkType.raw, sm['deviceState'].networkMetered)
+
+    # Write upload status for UI widget
+    if uploader.custom_server:
+      now = time.monotonic()
+      if success or (now - uploader._status_update_time >= 10):
+        status = uploader.compute_upload_status()
+        uploader.params.put_nonblocking(
+          "UploaderStatus", json.dumps(status)
+        )
+        uploader._status_update_time = now
+
     if uploader.custom_server:
       # Custom server: fixed 5-minute poll on failure/idle, fast retry on success
       if success:

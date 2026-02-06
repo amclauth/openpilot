@@ -19,6 +19,7 @@
 #include "frogpilot/ui/qt/widgets/developer_sidebar.h"
 
 class ExperimentalModeButton;
+class UploadStatusWidget;
 
 class OffroadHome : public QFrame {
   Q_OBJECT
@@ -47,6 +48,7 @@ private:
   // FrogPilot variables
   ElidedLabel* date;
   ExperimentalModeButton *experimental_mode_btn;
+  UploadStatusWidget *upload_status;
 };
 
 class HomeWindow : public QWidget {
