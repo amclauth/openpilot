@@ -216,6 +216,7 @@ class Controls:
     if self.fire_the_babysitter:
       self.sm.ignore_alive.append('driverMonitoringState')
       self.sm.ignore_average_freq.append('driverMonitoringState')
+      self.sm.ignore_valid.append('driverMonitoringState')
 
   def set_initial_state(self):
     if REPLAY:
@@ -858,7 +859,7 @@ class Controls:
       else:
         self.steer_limited_by_safety = abs(CC.actuators.steer - CO.actuatorsOutput.steer) > 1e-2
 
-    force_decel = (self.sm['driverMonitoringState'].awarenessStatus < 0.) or \
+    force_decel = (not self.fire_the_babysitter and self.sm['driverMonitoringState'].awarenessStatus < 0.) or \
                   (self.state == State.softDisabling) or \
                   self.sm['frogpilotCarState'].forceCoast
 
