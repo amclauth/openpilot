@@ -256,8 +256,10 @@ class Uploader:
     """Return next segment file to upload for custom server.
 
     Uses cursor + monotonic stability check instead of xattr/locks.
-    Two-pass: first call records newest file name+size, second call
-    confirms unchanged after 60 real seconds before queuing all files.
+    Completed segments (where a newer segment exists) are queued
+    immediately. Only the latest segment uses the two-pass stability
+    gate: first call records newest file name+size, second call
+    confirms unchanged after 60 real seconds before queuing.
     """
     # If we have files queued from the current segment, return next
     if self._seg_files:
@@ -271,70 +273,88 @@ class Uploader:
     cursor = self._read_cursor()
     cursor_sort = get_directory_sort(cursor) if cursor else None
 
+    # Collect pending segment directories (after cursor)
+    pending_dirs = []
     for logdir in listdir_by_creation(self.root):
       if not logdir[0:1].isdigit():
         continue
       if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
         continue
+      pending_dirs.append(logdir)
 
-      path = os.path.join(self.root, logdir)
-      try:
-        names = [
-          n for n in os.listdir(path)
-          if not n.endswith(".lock")
-          and os.path.isfile(os.path.join(path, n))
-        ]
-      except OSError:
-        continue
-      if not names:
-        continue
-
-      # Find newest file by mtime
-      newest_name = ""
-      newest_mtime = 0.0
-      newest_size = 0
-      for n in names:
-        fn = os.path.join(path, n)
-        try:
-          st = os.stat(fn)
-          if st.st_mtime > newest_mtime:
-            newest_mtime = st.st_mtime
-            newest_name = n
-            newest_size = st.st_size
-        except OSError:
-          continue
-
-      if not newest_name:
-        continue
-
-      # Two-pass stability check (monotonic, immune to clock jumps)
-      if (self._seg_watch_segment == logdir
-              and self._seg_watch_file == newest_name
-              and self._seg_watch_size == newest_size
-              and time.monotonic() - self._seg_watch_time
-              > SEGMENT_MTIME_GATE):
-        # Stable — queue all files for upload
-        self._seg_current = logdir
-        self._seg_files = []
-        for n in sorted(names):
-          key = os.path.join(logdir, n)
-          fn = os.path.join(path, n)
-          self._seg_files.append((n, key, fn))
-        if self._seg_files:
-          return self._seg_files[0]
-
-      # Record observation (only reset timer when values change)
-      if (self._seg_watch_segment != logdir
-              or self._seg_watch_file != newest_name
-              or self._seg_watch_size != newest_size):
-        self._seg_watch_segment = logdir
-        self._seg_watch_file = newest_name
-        self._seg_watch_size = newest_size
-        self._seg_watch_time = time.monotonic()
+    if not pending_dirs:
+      self._seg_watch_segment = ""
       return None
 
-    # No segments to upload
-    self._seg_watch_segment = ""
+    logdir = pending_dirs[0]
+    is_latest = len(pending_dirs) == 1
+    path = os.path.join(self.root, logdir)
+
+    try:
+      names = [
+        n for n in os.listdir(path)
+        if not n.endswith(".lock")
+        and os.path.isfile(os.path.join(path, n))
+      ]
+    except OSError:
+      return None
+    if not names:
+      return None
+
+    # Not the latest segment — loggerd has moved on, safe to upload
+    if not is_latest:
+      self._seg_current = logdir
+      self._seg_files = []
+      for n in sorted(names):
+        key = os.path.join(logdir, n)
+        fn = os.path.join(path, n)
+        self._seg_files.append((n, key, fn))
+      if self._seg_files:
+        return self._seg_files[0]
+      return None
+
+    # Latest segment — use stability gate (existing two-pass check)
+    newest_name = ""
+    newest_mtime = 0.0
+    newest_size = 0
+    for n in names:
+      fn = os.path.join(path, n)
+      try:
+        st = os.stat(fn)
+        if st.st_mtime > newest_mtime:
+          newest_mtime = st.st_mtime
+          newest_name = n
+          newest_size = st.st_size
+      except OSError:
+        continue
+
+    if not newest_name:
+      return None
+
+    # Two-pass stability check (monotonic, immune to clock jumps)
+    if (self._seg_watch_segment == logdir
+            and self._seg_watch_file == newest_name
+            and self._seg_watch_size == newest_size
+            and time.monotonic() - self._seg_watch_time
+            > SEGMENT_MTIME_GATE):
+      # Stable — queue all files for upload
+      self._seg_current = logdir
+      self._seg_files = []
+      for n in sorted(names):
+        key = os.path.join(logdir, n)
+        fn = os.path.join(path, n)
+        self._seg_files.append((n, key, fn))
+      if self._seg_files:
+        return self._seg_files[0]
+
+    # Record observation (only reset timer when values change)
+    if (self._seg_watch_segment != logdir
+            or self._seg_watch_file != newest_name
+            or self._seg_watch_size != newest_size):
+      self._seg_watch_segment = logdir
+      self._seg_watch_file = newest_name
+      self._seg_watch_size = newest_size
+      self._seg_watch_time = time.monotonic()
     return None
 
   def compute_upload_status(self) -> dict:
