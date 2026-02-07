@@ -252,14 +252,56 @@ class Uploader:
 
     return None
 
+  def _observe_segment_stability(self, logdir: str) -> None:
+    """Look-ahead: observe newest file in a segment for stability tracking.
+
+    Updates _seg_watch_* variables so the stability timer starts running
+    before we actually need to gate on this segment. Only resets the
+    timer when the newest file's name or size changes.
+    """
+    path = os.path.join(self.root, logdir)
+    try:
+      names = os.listdir(path)
+    except OSError:
+      return
+
+    newest_name = ""
+    newest_mtime = 0.0
+    newest_size = 0
+    for n in names:
+      if n.endswith(".lock"):
+        continue
+      fn = os.path.join(path, n)
+      try:
+        st = os.stat(fn)
+        if not st.st_size:
+          continue
+        if st.st_mtime > newest_mtime:
+          newest_mtime = st.st_mtime
+          newest_name = n
+          newest_size = st.st_size
+      except OSError:
+        continue
+
+    if not newest_name:
+      return
+
+    if (self._seg_watch_segment != logdir
+            or self._seg_watch_file != newest_name
+            or self._seg_watch_size != newest_size):
+      self._seg_watch_segment = logdir
+      self._seg_watch_file = newest_name
+      self._seg_watch_size = newest_size
+      self._seg_watch_time = time.monotonic()
+
   def _next_custom_segment_file(self) -> tuple[str, str, str] | None:
     """Return next segment file to upload for custom server.
 
     Uses cursor + monotonic stability check instead of xattr/locks.
-    Completed segments (where a newer segment exists) are queued
-    immediately. Only the latest segment uses the two-pass stability
-    gate: first call records newest file name+size, second call
-    confirms unchanged after 60 real seconds before queuing.
+    Non-latest segments upload immediately (loggerd has moved on).
+    Only the latest segment uses the two-pass stability gate. While
+    uploading earlier segments, look-ahead observes the latest segment
+    so the stability timer runs concurrently.
     """
     # If we have files queued from the current segment, return next
     if self._seg_files:
@@ -273,21 +315,23 @@ class Uploader:
     cursor = self._read_cursor()
     cursor_sort = get_directory_sort(cursor) if cursor else None
 
-    # Collect pending segment directories (after cursor)
-    pending_dirs = []
+    # Single pass: find first pending segment and latest dir overall
+    first_pending = None
+    latest_dir = None
     for logdir in listdir_by_creation(self.root):
       if not logdir[0:1].isdigit():
         continue
-      if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
-        continue
-      pending_dirs.append(logdir)
+      latest_dir = logdir
+      if first_pending is None:
+        if cursor_sort and get_directory_sort(logdir) <= cursor_sort:
+          continue
+        first_pending = logdir
 
-    if not pending_dirs:
+    if not first_pending:
       self._seg_watch_segment = ""
       return None
 
-    logdir = pending_dirs[0]
-    is_latest = len(pending_dirs) == 1
+    logdir = first_pending
     path = os.path.join(self.root, logdir)
 
     try:
@@ -302,7 +346,7 @@ class Uploader:
       return None
 
     # Not the latest segment — loggerd has moved on, safe to upload
-    if not is_latest:
+    if logdir != latest_dir:
       self._seg_current = logdir
       self._seg_files = []
       for n in sorted(names):
@@ -310,6 +354,8 @@ class Uploader:
         fn = os.path.join(path, n)
         self._seg_files.append((n, key, fn))
       if self._seg_files:
+        # Look-ahead: start stability timer on latest segment
+        self._observe_segment_stability(latest_dir)
         return self._seg_files[0]
       return None
 
