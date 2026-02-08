@@ -352,6 +352,8 @@ def hardware_thread(end_event, hw_queue) -> None:
       params.put_bool("IsEngaged", False)
       engaged_prev = False
       HARDWARE.set_power_save(not should_start)
+      if not should_start:
+        HARDWARE.request_wifi_scan()
 
     if sm.updated['controlsState']:
       engaged = sm['controlsState'].enabled
