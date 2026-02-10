@@ -319,6 +319,8 @@ class CarInterfaceBase(ABC):
       if cp is not None:
         cp.update_strings(can_strings)
 
+    self.frogpilot_toggles = frogpilot_toggles
+
     # get CarState
     ret, fp_ret = self._update(c, frogpilot_toggles)
 
@@ -373,7 +375,7 @@ class CarInterfaceBase(ABC):
       events.add(EventName.stockFcw)
     if cs_out.stockAeb:
       events.add(EventName.stockAeb)
-    if cs_out.vEgo > MAX_CTRL_SPEED:
+    if cs_out.vEgo > MAX_CTRL_SPEED and not getattr(self.frogpilot_toggles, 'mute_speed_warning', False):
       events.add(EventName.speedTooHigh)
     if cs_out.cruiseState.nonAdaptive:
       events.add(EventName.wrongCruiseMode)

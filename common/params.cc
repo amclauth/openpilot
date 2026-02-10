@@ -132,6 +132,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"FirmwareQueryDone", CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION},
     {"FireTheBabysitter", PERSISTENT},  // FireTheBabysitter change
     {"ForcePowerDown", PERSISTENT},
+    {"MuteSpeedWarning", PERSISTENT},
     {"GitBranch", PERSISTENT},
     {"GitCommit", PERSISTENT},
     {"GitCommitDate", PERSISTENT},

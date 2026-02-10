@@ -37,6 +37,7 @@ FrogPilotDevicePanel::FrogPilotDevicePanel(FrogPilotSettingsWindow *parent) : Fr
     {"DeviceShutdown", tr("Device Shutdown Timer"), tr("<b>Keep the device on for the set amount of time after a drive</b> before it shuts down automatically."), ""},
     // FireTheBabysitter change
     {"FireTheBabysitter", tr("Fire the Babysitter"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: Driver monitoring will be completely disabled. You are responsible for staying attentive.")).arg(tr("<b>Prevent the driver monitoring system from running.</b> No face tracking, no awareness alerts, no engagement lockouts. Requires reboot.")), ""},
+    {"MuteSpeedWarning", tr("Mute Speed Warning"), tr("<b>Suppress the speed-too-high warning above 149 kph (93 mph).</b> The driving model may be less accurate at high speeds."), ""},
     {"NoLogging", tr("Disable Logging"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: This will prevent your drives from being recorded and all data will be unobtainable!")).arg(tr("<b>Prevent the device from saving driving data.</b>")), ""},
     {"NoUploads", tr("Disable Uploads"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: This will prevent your drives from being uploaded to <b>comma connect</b> which will impact debugging and official support from comma!")).arg(tr("<b>Prevent the device from uploading driving data.</b>")), ""},
     {"HigherBitrate", tr("High-Quality Recording"), tr("<b>Save drive footage in higher video quality.</b>"), ""},
