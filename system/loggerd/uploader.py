@@ -723,8 +723,11 @@ def main(exit_event: threading.Event = None) -> None:
       else:  # False — upload HTTP failure
         if uploader._has_connected:
           uploader._upload_state = "error"
-        # Before first success, stay "idle" (network may not be ready)
-        backoff = 5 * 60
+          backoff = 5 * 60
+        else:
+          # Before first success, stay "idle" (network may not be ready)
+          uploader._upload_state = "idle"
+          backoff = 30
 
       # Pending segments: poll faster regardless of status update timing
       if uploader._upload_state == "idle" and backoff > 10:
@@ -749,7 +752,13 @@ def main(exit_event: threading.Event = None) -> None:
         cloudlog.info("upload backoff %r", backoff)
         backoff = min(backoff*2, 120)
     if allow_sleep:
-      time.sleep(backoff + random.uniform(0, backoff))
+      deadline = time.monotonic() + backoff + random.uniform(0, backoff)
+      while time.monotonic() < deadline and not exit_event.is_set():
+        sm.update(0)
+        new_net = sm['deviceState'].networkType if not force_wifi else NetworkType.wifi
+        if new_net != network_type:
+          break
+        time.sleep(min(5, max(0, deadline - time.monotonic())))
 
     # Update FrogPilot variables
     if sm['frogpilotPlan'].togglesUpdated:

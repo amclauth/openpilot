@@ -176,7 +176,7 @@ void Sidebar::updateState(const UIState &s, const FrogPilotUIState &fs) {
         auto netType = deviceState.getNetworkType();
         bool hasNetwork = netType != cereal::DeviceState::NetworkType::NONE;
 
-        if (state == "error") {
+        if (state == "error" && hasNetwork) {
           connectStatus = {{tr("ERROR"), counts}, danger_color};
         } else if (total == 0) {
           connectStatus = {{tr("IDLE"), tr("0/0")}, sidebar_color3};
