@@ -708,7 +708,7 @@ def main(exit_event: threading.Event = None) -> None:
           uploader.params.put_nonblocking("UploaderStatus", json.dumps(status))
           uploader._status_update_time = now
       if allow_sleep:
-        time.sleep(60)
+        time.sleep(5)
       continue
 
     success = uploader.step(sm['deviceState'].networkType.raw, sm['deviceState'].networkMetered)
