@@ -781,6 +781,12 @@ class Controls:
 
     if hasattr(self.LaC, "pid") and self.CP.lateralTuning.which() != "pid":
       self.LaC.pid._k_p = self.frogpilot_toggles.steerKp
+      steer_tu = getattr(self.frogpilot_toggles, 'steerTu', 0.0)
+      if steer_tu > 0:
+        kp_val = self.LaC.pid.k_p
+        self.LaC.pid._k_d = [[0], [kp_val * steer_tu / 8.0]]
+      else:
+        self.LaC.pid._k_d = [[0], [0.0]]
 
     # Update FrogPilot variables
     if self.sm['frogpilotPlan'].togglesUpdated:

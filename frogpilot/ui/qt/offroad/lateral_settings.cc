@@ -44,6 +44,7 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
     {"SteerKP", steerKp != 0 ? QString(tr("Kp Factor (Default: %1)")).arg(QString::number(steerKp, 'f', 2)) : tr("Kp Factor"), tr("<b>How strongly openpilot corrects lane position.</b> Higher is tighter but twitchier; lower is smoother but slower. Auto-learned by default."), ""},
     {"SteerLatAccel", latAccelFactor != 0 ? QString(tr("Lateral Acceleration (Default: %1)")).arg(QString::number(latAccelFactor, 'f', 2)) : tr("Lateral Acceleration"), tr("<b>Maps steering torque to turning response.</b> Increase for sharper turns; decrease for gentler steering. Auto-learned by default."), ""},
     {"SteerRatio", steerRatio != 0 ? QString(tr("Steer Ratio (Default: %1)")).arg(QString::number(steerRatio, 'f', 2)) : tr("Steer Ratio"), tr("<b>The relationship between steering wheel rotation and road wheel angle.</b> Increase if steering feels too quick or twitchy; decrease if it feels too slow or weak. Auto-learned by default."), ""},
+    {"SteerTu", tr("Damping Period Tu"), tr("<b>The natural oscillation period of the steering system, used to compute derivative damping (kd = kp x Tu / 8).</b> Measured at ~0.3s for this vehicle. Set to 0 to disable derivative damping. Higher values increase damping strength, reducing oscillation in curves."), ""},
     {"ForceAutoTune", tr("Force Auto-Tune On"), tr("<b>Force-enable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\".</b>"), ""},
     {"ForceAutoTuneOff", tr("Force Auto-Tune Off"), tr("<b>Force-disable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\" and use the set value instead.</b>"), ""},
     {"ForceTorqueController", tr("Force Torque Controller"), tr("<b>Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.</b>"), ""},
@@ -96,6 +97,9 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
     } else if (param == "SteerRatio") {
       std::vector<QString> steerRatioButton{"Reset"};
       lateralToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, steerRatio * 0.5, steerRatio * 1.5, QString(), std::map<float, QString>(), 0.01, false, {}, steerRatioButton, false, false);
+    } else if (param == "SteerTu") {
+      std::vector<QString> steerTuButton{"Reset"};
+      lateralToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, 0, 1.0, QString(), std::map<float, QString>(), 0.05, false, {}, steerTuButton, false, false);
 
     } else if (param == "AlwaysOnLateral") {
       FrogPilotManageControl *aolToggle = new FrogPilotManageControl(param, title, desc, icon);
@@ -243,6 +247,14 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
     if (FrogPilotConfirmationDialog::yesorno(tr("Reset <b>Steer Ratio</b> to its default value?"), this)) {
       params.putFloat("SteerRatio", steerRatio);
       steerRatioToggle->refresh();
+    }
+  });
+
+  steerTuToggle = static_cast<FrogPilotParamValueButtonControl*>(toggles["SteerTu"]);
+  QObject::connect(steerTuToggle, &FrogPilotParamValueButtonControl::buttonClicked, [this]() {
+    if (FrogPilotConfirmationDialog::yesorno(tr("Reset <b>Damping Period Tu</b> to its default value?"), this)) {
+      params.putFloat("SteerTu", 0);
+      steerTuToggle->refresh();
     }
   });
 
@@ -427,6 +439,10 @@ void FrogPilotLateralPanel::updateToggles() {
     else if (key == "SteerKP") {
       setVisible &= steerKp != 0;
       setVisible &= hasAutoTune ? forcingAutoTuneOff : !forcingAutoTune;
+      setVisible &= isTorqueCar || forcingTorqueController;
+    }
+
+    else if (key == "SteerTu") {
       setVisible &= isTorqueCar || forcingTorqueController;
     }
 
