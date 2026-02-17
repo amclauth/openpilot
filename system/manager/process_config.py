@@ -116,7 +116,6 @@ procs = [
   # debug procs
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
   PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar),
-  PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
 
   # FrogPilot processes
   NativeProcess("classic_modeld", "frogpilot/classic_modeld", ["./classic_modeld"], run_classic_modeld),
