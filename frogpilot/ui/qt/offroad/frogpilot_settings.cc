@@ -293,7 +293,6 @@ void FrogPilotSettingsWindow::updateVariables() {
 
     float currentDelayStock = params.getFloat("SteerDelayStock");
     float currentFrictionStock = params.getFloat("SteerFrictionStock");
-    float currentKPStock = params.getFloat("SteerKPStock");
     float currentLatAccelStock = params.getFloat("SteerLatAccelStock");
     float currentLongDelayStock = params.getFloat("LongitudinalActuatorDelayStock");
     float currentStartAccelStock = params.getFloat("StartAccelStock");
@@ -315,13 +314,6 @@ void FrogPilotSettingsWindow::updateVariables() {
         params.putFloat("SteerFriction", friction);
       }
       params.putFloat("SteerFrictionStock", friction);
-    }
-
-    if (currentKPStock != steerKp && steerKp != 0) {
-      if (params.getFloat("SteerKP") == currentKPStock || currentKPStock == 0) {
-        params.putFloat("SteerKP", steerKp);
-      }
-      params.putFloat("SteerKPStock", steerKp);
     }
 
     if (currentLatAccelStock != latAccelFactor && latAccelFactor != 0) {

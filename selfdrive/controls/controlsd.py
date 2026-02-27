@@ -13,7 +13,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.git import get_short_branch
-from openpilot.common.numpy_fast import clip
+from openpilot.common.numpy_fast import clip, interp
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
 from openpilot.common.swaglog import cloudlog
@@ -40,6 +40,9 @@ SOFT_DISABLE_TIME = 3  # seconds
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
 LANE_DEPARTURE_THRESHOLD = 0.1
 CAMERA_OFFSET = 0.04
+
+KP_LAT_ACCEL_BP = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+KP_LAT_ACCEL_V = [1.0, 1.0, 1.1, 1.2, 1.3, 1.4, 1.4]
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -780,7 +783,13 @@ class Controls:
       self.experimental_mode = self.sm['frogpilotPlan'].experimentalMode
 
     if hasattr(self.LaC, "pid") and self.CP.lateralTuning.which() != "pid":
-      self.LaC.pid._k_p = self.frogpilot_toggles.steerKp
+      if getattr(self.frogpilot_toggles, 'kp_mac_tune', False):
+        desired_lat_accel = abs(self.desired_curvature) * max(CS.vEgo, 0.1) ** 2
+        kp_val = interp(desired_lat_accel, KP_LAT_ACCEL_BP, KP_LAT_ACCEL_V)
+        self.LaC.pid._k_p = [[0], [kp_val]]
+      else:
+        self.LaC.pid._k_p = self.frogpilot_toggles.steerKp
+
       steer_tu = getattr(self.frogpilot_toggles, 'steerTu', 0.0)
       if steer_tu > 0:
         kp_val = self.LaC.pid.k_p
