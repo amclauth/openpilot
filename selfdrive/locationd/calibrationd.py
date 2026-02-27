@@ -230,6 +230,11 @@ class Calibrator:
   def get_msg(self, valid: bool) -> capnp.lib.capnp._DynamicStructBuilder:
     smooth_rpy = self.get_smooth_rpy()
 
+    roll_offset_deg = self.params.get_float("CameraRollOffset")
+    if roll_offset_deg is not None and abs(roll_offset_deg) > 0.001:
+      smooth_rpy = smooth_rpy.copy()
+      smooth_rpy[0] += np.radians(roll_offset_deg)
+
     msg = messaging.new_message('liveCalibration')
     msg.valid = valid
 

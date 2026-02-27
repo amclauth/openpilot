@@ -39,6 +39,7 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
 
   const std::vector<std::tuple<QString, QString, QString, QString>> lateralToggles {
     {"AdvancedLateralTune", tr("Advanced Lateral Tuning"), tr("<b>Advanced steering control changes to fine-tune how openpilot drives.</b>"), "../../frogpilot/assets/toggle_icons/icon_advanced_lateral_tune.png"},
+    {"CameraRollOffset", tr("Camera Roll Offset (Default: 0.00)"), tr("<b>Manual camera roll correction in degrees.</b> Adjusts the perceived lane center position. Positive values shift the car's target position to the left, negative to the right. Each 0.05 degrees shifts position approximately 2cm. Typical corrections are -0.50 to +0.50 degrees."), ""},
     {"SteerDelay", steerActuatorDelay != 0 ? QString(tr("Actuator Delay (Default: %1)")).arg(QString::number(steerActuatorDelay, 'f', 2)) : tr("Actuator Delay"), tr("<b>The time between openpilot's steering command and the vehicle's response.</b> Increase if the vehicle reacts late; decrease if it feels jumpy. Auto-learned by default."), ""},
     {"SteerFriction", friction != 0 ? QString(tr("Friction (Default: %1)")).arg(QString::number(friction, 'f', 2)) : tr("Friction"), tr("<b>Compensates for steering friction.</b> Increase if the wheel sticks near center; decrease if it jitters. Auto-learned by default."), ""},
     {"SteerKP", steerKp != 0 ? QString(tr("Kp Factor (Default: %1)")).arg(QString::number(steerKp, 'f', 2)) : tr("Kp Factor"), tr("<b>How strongly openpilot corrects lane position.</b> Higher is tighter but twitchier; lower is smoother but slower. Auto-learned by default."), ""},
@@ -82,6 +83,9 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
         lateralLayout->setCurrentWidget(advancedLateralTunePanel);
       });
       lateralToggle = advancedLateralTuneToggle;
+    } else if (param == "CameraRollOffset") {
+      std::vector<QString> rollButton{"Reset"};
+      lateralToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, -1.0, 1.0, QString(), std::map<float, QString>(), 0.05, false, {}, rollButton, false, false);
     } else if (param == "SteerDelay") {
       std::vector<QString> steerDelayButton{"Reset"};
       lateralToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, 0.01, 1, QString(), std::map<float, QString>(), 0.01, false, {}, steerDelayButton, false, false);
@@ -209,6 +213,14 @@ FrogPilotLateralPanel::FrogPilotLateralPanel(FrogPilotSettingsWindow *parent) : 
       }
     });
   }
+
+  cameraRollToggle = static_cast<FrogPilotParamValueButtonControl*>(toggles["CameraRollOffset"]);
+  QObject::connect(cameraRollToggle, &FrogPilotParamValueButtonControl::buttonClicked, [this]() {
+    if (FrogPilotConfirmationDialog::yesorno(tr("Reset <b>Camera Roll Offset</b> to its default value?"), this)) {
+      params.putFloat("CameraRollOffset", 0);
+      cameraRollToggle->refresh();
+    }
+  });
 
   steerDelayToggle = static_cast<FrogPilotParamValueButtonControl*>(toggles["SteerDelay"]);
   QObject::connect(steerDelayToggle, &FrogPilotParamValueButtonControl::buttonClicked, [this]() {
