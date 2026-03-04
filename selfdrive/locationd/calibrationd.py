@@ -164,7 +164,7 @@ class Calibrator:
 
     write_this_cycle = (self.idx == 0) and (self.block_idx % (INPUTS_WANTED//5) == 5)
     if self.param_put and write_this_cycle:
-      self.params.put_nonblocking("CalibrationParams", self.get_msg(True).to_bytes())
+      self.params.put_nonblocking("CalibrationParams", self.get_save_msg().to_bytes())
 
   def handle_v_ego(self, v_ego: float) -> None:
     self.v_ego = v_ego
@@ -227,13 +227,25 @@ class Calibrator:
 
     return new_rpy
 
+  def get_save_msg(self) -> capnp.lib.capnp._DynamicStructBuilder:
+    """Build a calibration message WITHOUT CameraRollOffset for persistence.
+
+    The roll offset is a display-time adjustment that should not feed back
+    into the saved calibration state, otherwise it accumulates on each boot.
+    """
+    return self._build_msg(True, apply_roll_offset=False)
+
   def get_msg(self, valid: bool) -> capnp.lib.capnp._DynamicStructBuilder:
+    return self._build_msg(valid, apply_roll_offset=True)
+
+  def _build_msg(self, valid: bool, apply_roll_offset: bool) -> capnp.lib.capnp._DynamicStructBuilder:
     smooth_rpy = self.get_smooth_rpy()
 
-    roll_offset_deg = self.params.get_float("CameraRollOffset")
-    if roll_offset_deg is not None and abs(roll_offset_deg) > 0.001:
-      smooth_rpy = smooth_rpy.copy()
-      smooth_rpy[0] += np.radians(roll_offset_deg)
+    if apply_roll_offset:
+      roll_offset_deg = self.params.get_float("CameraRollOffset")
+      if roll_offset_deg is not None and abs(roll_offset_deg) > 0.001:
+        smooth_rpy = smooth_rpy.copy()
+        smooth_rpy[0] += np.radians(roll_offset_deg)
 
     msg = messaging.new_message('liveCalibration')
     msg.valid = valid
