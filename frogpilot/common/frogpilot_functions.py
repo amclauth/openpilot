@@ -28,7 +28,7 @@ from openpilot.frogpilot.common.frogpilot_variables import (
   ERROR_LOGS_PATH, EXCLUDED_KEYS, HD_LOGS_PATH, KONIK_LOGS_PATH, MODELS_PATH, SCREEN_RECORDINGS_PATH,
   THEME_SAVE_PATH, VIDEO_CACHE_PATH, FrogPilotVariables, frogpilot_default_params, get_frogpilot_toggles, params
 )
-from openpilot.frogpilot.system.frogpilot_stats import send_stats
+
 
 def backup_directory(backup, destination, success_message, fail_message, minimum_backup_size=0, compressed=False):
   in_progress_destination = destination.parent / (destination.name + "_in_progress")
@@ -176,8 +176,6 @@ def frogpilot_boot_functions(build_metadata, params_cache):
 
     backup_frogpilot(build_metadata)
     backup_toggles(params_cache)
-
-    send_stats()
 
   threading.Thread(target=backup_thread, daemon=True).start()
 
