@@ -355,6 +355,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"FrogsGoMoosTweak", PERSISTENT},
     {"FullMap", PERSISTENT},
     {"GasRegenCmd", PERSISTENT},
+    {"GForceWidget", PERSISTENT},
     {"GoatScream", PERSISTENT},
     {"GreenLightAlert", PERSISTENT},
     {"HideAlerts", PERSISTENT},

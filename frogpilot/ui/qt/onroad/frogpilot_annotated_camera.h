@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
+
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include "common/util.h"
 #include "selfdrive/ui/qt/onroad/buttons.h"
 #include "selfdrive/ui/qt/widgets/cameraview.h"
 
@@ -67,6 +70,7 @@ protected:
 private:
   void paintCEMStatus(QPainter &p, const cereal::FrogPilotPlan::Reader &frogpilotPlan, FrogPilotUIScene &frogpilot_scene, SubMaster &sm);
   void paintCompass(QPainter &p, QJsonObject &frogpilot_toggles);
+  void paintGForce(QPainter &p, SubMaster &fpsm);
   void paintCurveSpeedControl(QPainter &p, const cereal::FrogPilotPlan::Reader &frogpilotPlan);
   void paintLateralPaused(QPainter &p, FrogPilotUIScene &frogpilot_scene);
   void paintLongitudinalPaused(QPainter &p, FrogPilotUIScene &frogpilot_scene);
@@ -114,7 +118,12 @@ private:
 
   QPoint cemStatusPosition;
   QPoint compassPosition;
+  QPoint gforcePosition;
   QPoint lateralPausedPosition;
+
+  FirstOrderFilter gforceLateralFilter;
+  FirstOrderFilter gforceLongitudinalFilter;
+  std::array<float, 72> gforceEnvelope{};
 
   QSharedPointer<QMovie> cemCurveIcon;
   QSharedPointer<QMovie> cemLeadIcon;

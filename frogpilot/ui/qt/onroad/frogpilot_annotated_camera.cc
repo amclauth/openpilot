@@ -1,8 +1,13 @@
+#include <cmath>
+
 #include <QMovie>
 
 #include "frogpilot/ui/qt/onroad/frogpilot_annotated_camera.h"
 
-FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent) : QWidget(parent) {
+FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent)
+    : QWidget(parent),
+      gforceLateralFilter(0, 0.15, 1.0 / UI_FREQ),
+      gforceLongitudinalFilter(0, 0.15, 1.0 / UI_FREQ) {
   animationTimer = new QTimer(this);
 
   brakePedalImg = loadPixmap("../../frogpilot/assets/other_images/brake_pedal.png", {btn_size, btn_size});
@@ -37,6 +42,7 @@ FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent) 
     params.putNonBlocking("FrogPilotStats", QJsonDocument(stats).toJson(QJsonDocument::Compact).toStdString());
 
     frogHopCount = 0;
+    gforceEnvelope.fill(0);
   });
 }
 
@@ -187,6 +193,13 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   } else {
     compassPosition.setX(0);
     compassPosition.setY(0);
+  }
+
+  if (!frogpilot_scene.map_open && !hideBottomIcons && frogpilot_toggles.value("gforce_widget").toBool()) {
+    paintGForce(p, fpsm);
+  } else {
+    gforcePosition.setX(0);
+    gforcePosition.setY(0);
   }
 
   if (!frogpilot_scene.map_open && !frogpilotPlan.getSpeedLimitChanged() && !(signalStyle == "static" && carState.getLeftBlinker()) && frogpilot_toggles.value("csc_status").toBool()) {
@@ -463,6 +476,146 @@ void FrogPilotAnnotatedCameraWidget::paintCompass(QPainter &p, QJsonObject &frog
   p.setBrush(whiteColor());
   p.setPen(Qt::NoPen);
   p.drawPolygon(triangle);
+
+  p.restore();
+}
+
+void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &fpsm) {
+  p.save();
+  p.setRenderHint(QPainter::Antialiasing);
+
+  constexpr int gforceRadius = 100;
+  constexpr int gforceDiameter = gforceRadius * 2;
+  constexpr float GRAVITY = 9.81f;
+  constexpr float LOG_K = 12.0f;
+  constexpr float LOG_DENOM = 3.2189f;  // log(1 + 2*12)
+  constexpr int ENVELOPE_BINS = 72;
+  constexpr float BIN_WIDTH_DEG = 360.0f / ENVELOPE_BINS;
+
+  // Log-scale mapping: 0-1g -> ~80% radius, 1-2g -> ~20% radius
+  auto logScale = [](float g_abs, float radius) -> float {
+    return radius * std::log(1.0f + std::min(g_abs, 2.0f) * LOG_K) / LOG_DENOM;
+  };
+
+  // Position: same side as DM icon, above compass
+  int cx = rightHandDM ? UI_BORDER_SIZE + widget_size / 2 : width() - UI_BORDER_SIZE - btn_size;
+  if (mapButtonVisible) {
+    cx += rightHandDM ? (btn_size - UI_BORDER_SIZE) : -(btn_size + UI_BORDER_SIZE);
+  }
+  int cy;
+  if (compassPosition != QPoint(0, 0)) {
+    cy = compassPosition.y() - widget_size / 2 - UI_BORDER_SIZE - gforceRadius;
+  } else {
+    cy = dmIconPosition.y() - widget_size / 2;
+  }
+  gforcePosition = QPoint(cx - gforceRadius, cy - gforceRadius);
+  QPoint center(cx, cy);
+
+  // Read acceleration data
+  const auto &carState = fpsm["carState"].getCarState();
+  float a_ego = carState.getAEgo();
+  float v_ego = carState.getVEgo();
+  float yaw_rate = carState.getYawRate();
+
+  float lon_g = gforceLongitudinalFilter.update(a_ego / GRAVITY);
+  float lat_g = gforceLateralFilter.update((v_ego * yaw_rate) / GRAVITY);
+  float total_g = std::sqrt(lat_g * lat_g + lon_g * lon_g);
+
+  // Update envelope (screen coords: lat_g=X, -lon_g=Y so forward=up)
+  if (total_g > 0.01f) {
+    float angle_rad = std::atan2(-lon_g, lat_g);
+    float angle_deg = angle_rad * 180.0f / M_PI;
+    int bin = ((int)(angle_deg / BIN_WIDTH_DEG) + ENVELOPE_BINS) % ENVELOPE_BINS;
+    if (total_g > gforceEnvelope[bin]) {
+      gforceEnvelope[bin] = total_g;
+    }
+    // Smooth adjacent bins
+    int prev = (bin - 1 + ENVELOPE_BINS) % ENVELOPE_BINS;
+    int next = (bin + 1) % ENVELOPE_BINS;
+    float adj_g = total_g * 0.7f;
+    if (adj_g > gforceEnvelope[prev]) gforceEnvelope[prev] = adj_g;
+    if (adj_g > gforceEnvelope[next]) gforceEnvelope[next] = adj_g;
+  }
+
+  // Background circle
+  p.setBrush(blackColor(150));
+  p.setPen(QPen(whiteColor(80), 2));
+  p.drawEllipse(center, gforceRadius, gforceRadius);
+
+  // Crosshair
+  p.setPen(QPen(whiteColor(60), 1));
+  p.drawLine(cx - gforceRadius, cy, cx + gforceRadius, cy);
+  p.drawLine(cx, cy - gforceRadius, cx, cy + gforceRadius);
+
+  // Concentric rings (no labels)
+  p.setBrush(Qt::NoBrush);
+  int r05 = (int)logScale(0.5f, gforceRadius);
+  p.setPen(QPen(whiteColor(60), 1, Qt::DashLine));
+  p.drawEllipse(center, r05, r05);
+
+  int r10 = (int)logScale(1.0f, gforceRadius);
+  p.setPen(QPen(whiteColor(100), 1.5, Qt::SolidLine));
+  p.drawEllipse(center, r10, r10);
+
+  // Draw envelope polygon
+  QPainterPath envPath;
+  bool envStarted = false;
+  for (int i = 0; i < ENVELOPE_BINS; ++i) {
+    if (gforceEnvelope[i] < 0.01f) continue;
+    float a = i * BIN_WIDTH_DEG * M_PI / 180.0f;
+    float r = logScale(gforceEnvelope[i], gforceRadius);
+    float ex = cx + r * std::cos(a);
+    float ey = cy + r * std::sin(a);
+    if (!envStarted) {
+      envPath.moveTo(ex, ey);
+      envStarted = true;
+    } else {
+      envPath.lineTo(ex, ey);
+    }
+  }
+  if (envStarted) {
+    envPath.closeSubpath();
+    p.setBrush(QColor(255, 255, 255, 30));
+    p.setPen(QPen(QColor(255, 255, 255, 80), 1));
+    p.drawPath(envPath);
+  }
+
+  // Map current g-force to pixel position (log scale per axis)
+  float dot_x = logScale(std::abs(lat_g), gforceRadius) * (lat_g >= 0 ? 1.0f : -1.0f);
+  float dot_y = logScale(std::abs(lon_g), gforceRadius) * (lon_g >= 0 ? -1.0f : 1.0f);
+
+  // Clamp to circle
+  float dot_dist = std::sqrt(dot_x * dot_x + dot_y * dot_y);
+  if (dot_dist > gforceRadius) {
+    dot_x *= gforceRadius / dot_dist;
+    dot_y *= gforceRadius / dot_dist;
+  }
+
+  int dx = cx + (int)dot_x;
+  int dy = cy + (int)dot_y;
+
+  // Dot color by magnitude
+  QColor dotColor;
+  if (total_g < 0.3f) dotColor = QColor(50, 200, 50);
+  else if (total_g < 0.7f) dotColor = QColor(255, 200, 0);
+  else if (total_g < 1.0f) dotColor = QColor(255, 120, 0);
+  else dotColor = QColor(220, 40, 40);
+
+  // Glow halo
+  p.setBrush(QColor(dotColor.red(), dotColor.green(), dotColor.blue(), 60));
+  p.setPen(Qt::NoPen);
+  p.drawEllipse(QPoint(dx, dy), 16, 16);
+
+  // Dot
+  p.setBrush(dotColor);
+  p.drawEllipse(QPoint(dx, dy), 8, 8);
+
+  // Magnitude text below circle
+  p.setFont(InterFont(28, QFont::Bold));
+  p.setPen(whiteColor(200));
+  QString gText = QString::number(total_g, 'f', 2) + "g";
+  p.drawText(QRect(cx - gforceRadius, cy + gforceRadius + 5, gforceDiameter, 30),
+             Qt::AlignHCenter, gText);
 
   p.restore();
 }
