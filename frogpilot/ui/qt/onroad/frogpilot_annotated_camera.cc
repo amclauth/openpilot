@@ -196,7 +196,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   }
 
   if (!frogpilot_scene.map_open && !hideBottomIcons && frogpilot_toggles.value("gforce_widget").toBool()) {
-    paintGForce(p, fpsm);
+    paintGForce(p, sm, fpsm);
   } else {
     gforcePosition.setX(0);
     gforcePosition.setY(0);
@@ -480,7 +480,7 @@ void FrogPilotAnnotatedCameraWidget::paintCompass(QPainter &p, QJsonObject &frog
   p.restore();
 }
 
-void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &fpsm) {
+void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, SubMaster &fpsm) {
   p.save();
   p.setRenderHint(QPainter::Antialiasing);
 
@@ -498,7 +498,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &fpsm) {
   };
 
   // Position: same side as DM icon, above compass
-  int cx = rightHandDM ? UI_BORDER_SIZE + widget_size / 2 : width() - UI_BORDER_SIZE - btn_size;
+  int cx = (rightHandDM ? UI_BORDER_SIZE + widget_size / 2 : width() - UI_BORDER_SIZE - btn_size) + widget_size / 2;
   if (mapButtonVisible) {
     cx += rightHandDM ? (btn_size - UI_BORDER_SIZE) : -(btn_size + UI_BORDER_SIZE);
   }
@@ -511,14 +511,20 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &fpsm) {
   gforcePosition = QPoint(cx - gforceRadius, cy - gforceRadius);
   QPoint center(cx, cy);
 
-  // Read acceleration data
-  const auto &carState = fpsm["carState"].getCarState();
-  float a_ego = carState.getAEgo();
-  float v_ego = carState.getVEgo();
-  float yaw_rate = carState.getYawRate();
+  // Read acceleration data from liveLocationKalman (IMU-fused, works on all cars)
+  const auto &llk = sm["liveLocationKalman"].getLiveLocationKalman();
+  auto accelCal = llk.getAccelerationCalibrated();
+  float accel_x = 0.0f, accel_y = 0.0f;
+  if (accelCal.getValid()) {
+    auto vals = accelCal.getValue();
+    if (vals.size() >= 2) {
+      accel_x = vals[0];
+      accel_y = vals[1];
+    }
+  }
 
-  float lon_g = gforceLongitudinalFilter.update(a_ego / GRAVITY);
-  float lat_g = gforceLateralFilter.update((v_ego * yaw_rate) / GRAVITY);
+  float lon_g = gforceLongitudinalFilter.update(accel_x / GRAVITY);
+  float lat_g = gforceLateralFilter.update(accel_y / GRAVITY);
   float total_g = std::sqrt(lat_g * lat_g + lon_g * lon_g);
 
   // Update envelope (screen coords: lat_g=X, -lon_g=Y so forward=up)
@@ -604,11 +610,11 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &fpsm) {
   // Glow halo
   p.setBrush(QColor(dotColor.red(), dotColor.green(), dotColor.blue(), 60));
   p.setPen(Qt::NoPen);
-  p.drawEllipse(QPoint(dx, dy), 16, 16);
+  p.drawEllipse(QPoint(dx, dy), 32, 32);
 
   // Dot
   p.setBrush(dotColor);
-  p.drawEllipse(QPoint(dx, dy), 8, 8);
+  p.drawEllipse(QPoint(dx, dy), 16, 16);
 
   // Magnitude text below circle
   p.setFont(InterFont(28, QFont::Bold));

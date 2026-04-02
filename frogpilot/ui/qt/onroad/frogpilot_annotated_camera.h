@@ -70,7 +70,7 @@ protected:
 private:
   void paintCEMStatus(QPainter &p, const cereal::FrogPilotPlan::Reader &frogpilotPlan, FrogPilotUIScene &frogpilot_scene, SubMaster &sm);
   void paintCompass(QPainter &p, QJsonObject &frogpilot_toggles);
-  void paintGForce(QPainter &p, SubMaster &fpsm);
+  void paintGForce(QPainter &p, SubMaster &sm, SubMaster &fpsm);
   void paintCurveSpeedControl(QPainter &p, const cereal::FrogPilotPlan::Reader &frogpilotPlan);
   void paintLateralPaused(QPainter &p, FrogPilotUIScene &frogpilot_scene);
   void paintLongitudinalPaused(QPainter &p, FrogPilotUIScene &frogpilot_scene);
