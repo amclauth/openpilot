@@ -1,8 +1,13 @@
+#include <algorithm>
 #include <cmath>
 
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
 #include <QMovie>
 
 #include "frogpilot/ui/qt/onroad/frogpilot_annotated_camera.h"
+#include "system/hardware/hw.h"
 
 FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent)
     : QWidget(parent),
@@ -41,8 +46,38 @@ FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent)
     stats["FrogHops"] = stats.value("FrogHops").toInt(0) + frogHopCount;
     params.putNonBlocking("FrogPilotStats", QJsonDocument(stats).toJson(QJsonDocument::Compact).toStdString());
 
+    // Save g-force envelope to last segment before clearing
+    bool hasData = std::any_of(gforceEnvelope.begin(), gforceEnvelope.end(),
+                               [](float v) { return v > 0.01f; });
+    if (hasData) {
+      std::string route = params.get("CurrentRoute");
+      if (!route.empty()) {
+        QString prefix = QString::fromStdString(route) + "--";
+        QDir dir(QString::fromStdString(Path::log_root()));
+        QStringList segments = dir.entryList(QStringList{prefix + "*"}, QDir::Dirs, QDir::Name);
+        if (!segments.isEmpty()) {
+          QString lastSeg = dir.filePath(segments.last());
+          QJsonObject obj;
+          QJsonArray bins;
+          for (int i = 0; i < 72; ++i) {
+            bins.append((double)gforceEnvelope[i]);
+          }
+          obj["envelope"] = bins;
+          obj["bin_width_deg"] = 5.0;
+          obj["max_lat_g"] = (double)gforceMaxLat;
+          obj["max_lon_g"] = (double)gforceMaxLon;
+          QFile file(lastSeg + "/gforce_envelope.json");
+          if (file.open(QIODevice::WriteOnly)) {
+            file.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+          }
+        }
+      }
+    }
+
     frogHopCount = 0;
     gforceEnvelope.fill(0);
+    gforceMaxLat = 0;
+    gforceMaxLon = 0;
   });
 }
 
@@ -526,6 +561,9 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   float lon_g = gforceLongitudinalFilter.update(accel_x / GRAVITY);
   float lat_g = gforceLateralFilter.update(accel_y / GRAVITY);
   float total_g = std::sqrt(lat_g * lat_g + lon_g * lon_g);
+
+  if (std::abs(lat_g) > gforceMaxLat) gforceMaxLat = std::abs(lat_g);
+  if (std::abs(lon_g) > gforceMaxLon) gforceMaxLon = std::abs(lon_g);
 
   // Update envelope (screen coords: lat_g=X, -lon_g=Y so forward=up)
   if (total_g > 0.01f) {

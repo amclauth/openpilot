@@ -124,6 +124,8 @@ private:
   FirstOrderFilter gforceLateralFilter;
   FirstOrderFilter gforceLongitudinalFilter;
   std::array<float, 72> gforceEnvelope{};
+  float gforceMaxLat = 0;
+  float gforceMaxLon = 0;
 
   QSharedPointer<QMovie> cemCurveIcon;
   QSharedPointer<QMovie> cemLeadIcon;
