@@ -594,11 +594,11 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   // Concentric rings (no labels)
   p.setBrush(Qt::NoBrush);
   int r05 = (int)logScale(0.5f, gforceRadius);
-  p.setPen(QPen(whiteColor(60), 1, Qt::DashLine));
+  p.setPen(QPen(whiteColor(120), 1.5, Qt::DashLine));
   p.drawEllipse(center, r05, r05);
 
   int r10 = (int)logScale(1.0f, gforceRadius);
-  p.setPen(QPen(whiteColor(100), 1.5, Qt::SolidLine));
+  p.setPen(QPen(whiteColor(140), 1.5, Qt::SolidLine));
   p.drawEllipse(center, r10, r10);
 
   // Draw envelope polygon
@@ -619,8 +619,8 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   }
   if (envStarted) {
     envPath.closeSubpath();
-    p.setBrush(QColor(255, 255, 255, 30));
-    p.setPen(QPen(QColor(255, 255, 255, 80), 1));
+    p.setBrush(QColor(100, 180, 255, 50));
+    p.setPen(QPen(QColor(130, 200, 255, 140), 1.5));
     p.drawPath(envPath);
   }
 
@@ -658,7 +658,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   p.setFont(InterFont(28, QFont::Bold));
   p.setPen(whiteColor(200));
   QString gText = QString::number(total_g, 'f', 2) + "g";
-  p.drawText(QRect(cx - gforceRadius, cy + gforceRadius + 5, gforceDiameter, 30),
+  p.drawText(QRect(cx - gforceRadius, cy + gforceRadius + 2, gforceDiameter, 40),
              Qt::AlignHCenter, gText);
 
   p.restore();
