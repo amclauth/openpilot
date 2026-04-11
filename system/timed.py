@@ -14,13 +14,14 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.system.hardware import AGNOS
 
 
-def set_timezone(timezone):
+def set_timezone(timezone: str) -> bool:
+  """Set system timezone. Returns True on success, False on any failure."""
   valid_timezones = subprocess.check_output('timedatectl list-timezones', shell=True, encoding='utf8').strip().split('\n')
   if timezone not in valid_timezones:
     cloudlog.error(f"Timezone not supported {timezone}")
-    return
+    return False
 
-  cloudlog.debug(f"Setting timezone to {timezone}")
+  cloudlog.info(f"Setting timezone to {timezone}")
   try:
     if AGNOS:
       tzpath = os.path.join("/usr/share/zoneinfo/", timezone)
@@ -31,17 +32,19 @@ def set_timezone(timezone):
       subprocess.check_call(f'sudo timedatectl set-timezone {timezone}', shell=True)
   except subprocess.CalledProcessError:
     cloudlog.exception(f"Error setting timezone to {timezone}")
+    return False
+  return True
 
 
-def set_time(new_time):
-  diff = datetime.datetime.now() - new_time
+def set_time(new_time_utc: datetime.datetime) -> None:
+  """Set the system clock from a UTC datetime if it differs by more than 10s."""
+  diff = abs(datetime.datetime.now(datetime.timezone.utc) - new_time_utc)
   if diff < datetime.timedelta(seconds=10):
-    cloudlog.debug(f"Time diff too small: {diff}")
     return
 
-  cloudlog.debug(f"Setting time to {new_time}")
+  cloudlog.info(f"Setting system clock to {new_time_utc} (was off by {diff})")
   try:
-    subprocess.run(f"TZ=UTC date -s '{new_time}'", shell=True, check=True)
+    subprocess.check_call(["sudo", "date", "-s", f"@{int(new_time_utc.timestamp())}"])
   except subprocess.CalledProcessError:
     cloudlog.exception("timed.failed_setting_time")
 
@@ -58,12 +61,12 @@ def main() -> NoReturn:
 
   params = Params()
 
-  # Restore timezone from param
-  tz = params.get("Timezone", encoding='utf8')
+  # Restore timezone from param (one-shot defensive set at boot)
+  current_timezone = params.get("Timezone", encoding='utf8')
   tf = TimezoneFinder()
-  if tz is not None:
+  if current_timezone is not None:
     cloudlog.debug("Restoring timezone from param")
-    set_timezone(tz)
+    set_timezone(current_timezone)
 
   pm = messaging.PubMaster(['clocks'])
   sm = messaging.SubMaster(['liveLocationKalman'])
@@ -79,20 +82,21 @@ def main() -> NoReturn:
     if not llk.gpsOK or (time.monotonic() - sm.logMonoTime['liveLocationKalman']/1e9) > 0.2:
       continue
 
-    # set time
-    # TODO: account for unixTimesatmpMillis being a (usually short) time in the past
-    gps_time = datetime.datetime.fromtimestamp(llk.unixTimestampMillis / 1000.)
+    # set time (UTC-aware to avoid local-timezone coupling)
+    gps_time = datetime.datetime.fromtimestamp(
+        llk.unixTimestampMillis / 1000., tz=datetime.timezone.utc)
     set_time(gps_time)
 
-    # set timezone
+    # set timezone (only when it actually changes)
     pos = llk.positionGeodetic.value
     if len(pos) == 3:
       gps_timezone = tf.timezone_at(lat=pos[0], lng=pos[1])
       if gps_timezone is None:
         cloudlog.critical(f"No timezone found based on {pos=}")
-      else:
-        set_timezone(gps_timezone)
-        params.put_nonblocking("Timezone", gps_timezone)
+      elif gps_timezone != current_timezone:
+        if set_timezone(gps_timezone):
+          params.put_nonblocking("Timezone", gps_timezone)
+          current_timezone = gps_timezone
 
     time.sleep(10)
 
