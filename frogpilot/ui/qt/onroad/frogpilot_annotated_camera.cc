@@ -7,6 +7,7 @@
 #include <QMovie>
 
 #include "frogpilot/ui/qt/onroad/frogpilot_annotated_camera.h"
+#include "frogpilot/ui/qt/onroad/ui_breadcrumb.h"
 #include "system/hardware/hw.h"
 
 FrogPilotAnnotatedCameraWidget::FrogPilotAnnotatedCameraWidget(QWidget *parent)
@@ -217,6 +218,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   const cereal::ModelDataV2::Reader &model = sm["modelV2"].getModelV2();
 
   if (!hideBottomIcons && frogpilot_toggles.value("cem_status").toBool()) {
+    UiBreadcrumb::instance().stage("CEMStatus");
     paintCEMStatus(p, frogpilotPlan, frogpilot_scene, sm);
   } else {
     cemStatusPosition.setX(0);
@@ -224,6 +226,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   }
 
   if (!frogpilot_scene.map_open && !hideBottomIcons && frogpilot_toggles.value("compass").toBool()) {
+    UiBreadcrumb::instance().stage("Compass");
     paintCompass(p, frogpilot_toggles);
   } else {
     compassPosition.setX(0);
@@ -231,6 +234,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   }
 
   if (!frogpilot_scene.map_open && !hideBottomIcons && frogpilot_toggles.value("gforce_widget").toBool()) {
+    UiBreadcrumb::instance().stage("GForce");
     paintGForce(p, sm, fpsm);
   } else {
     gforcePosition.setX(0);
@@ -239,11 +243,13 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
 
   if (!frogpilot_scene.map_open && !frogpilotPlan.getSpeedLimitChanged() && !(signalStyle == "static" && carState.getLeftBlinker()) && frogpilot_toggles.value("csc_status").toBool()) {
     if (frogpilotPlan.getCscTraining()) {
+      UiBreadcrumb::instance().stage("CscTraining");
       paintSmartControllerTraining(p, frogpilotPlan);
     } else {
       glowTimer.invalidate();
 
       if (isCruiseSet && frogpilotPlan.getCscControllingSpeed()) {
+        UiBreadcrumb::instance().stage("CurveSpeedControl");
         paintCurveSpeedControl(p, frogpilotPlan);
       }
     }
@@ -252,6 +258,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   }
 
   if (!frogpilot_scene.map_open && frogpilotCarState.getPauseLateral() && !hideBottomIcons) {
+    UiBreadcrumb::instance().stage("LateralPaused");
     paintLateralPaused(p, frogpilot_scene);
   } else {
     lateralPausedPosition.setX(0);
@@ -259,40 +266,49 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   }
 
   if (!frogpilot_scene.map_open && (frogpilotCarState.getForceCoast() || frogpilotCarState.getPauseLongitudinal()) && !hideBottomIcons) {
+    UiBreadcrumb::instance().stage("LongitudinalPaused");
     paintLongitudinalPaused(p, frogpilot_scene);
   }
 
   if (!bigMapOpen && frogpilot_toggles.value("pedals_on_ui").toBool()) {
+    UiBreadcrumb::instance().stage("PedalIcons");
     paintPedalIcons(p, carState, frogpilotCarState, frogpilot_scene, frogpilot_toggles);
   }
 
   if (frogpilotPlan.getSpeedLimitChanged()) {
+    UiBreadcrumb::instance().stage("PendingSpeedLimit");
     paintPendingSpeedLimit(p, frogpilotPlan);
   } else {
     pendingLimitTimer.invalidate();
   }
 
   if (frogpilot_toggles.value("radar_tracks").toBool()) {
+    UiBreadcrumb::instance().stage("RadarTracks");
     paintRadarTracks(p, model, s, frogpilot_scene, sm, fpsm);
   }
 
   if (frogpilot_toggles.value("road_name_ui").toBool()) {
+    UiBreadcrumb::instance().stage("RoadName");
     paintRoadName(p);
   }
 
   if (!bigMapOpen && (mutcdSpeedLimit || viennaSpeedLimit) && frogpilot_toggles.value("speed_limit_sources").toBool()) {
+    UiBreadcrumb::instance().stage("SpeedLimitSources");
     paintSpeedLimitSources(p, frogpilotCarState, frogpilotNavigation, frogpilotPlan);
   }
 
   if (!frogpilot_scene.map_open && standstillDuration != 0 && frogpilot_scene.started_timer / UI_FREQ >= 60) {
+    UiBreadcrumb::instance().stage("StandstillTimer");
     paintStandstillTimer(p);
   }
 
   if (scene.track_vertices.length() >= 1 && frogpilotPlan.getRedLight() && frogpilot_toggles.value("show_stopping_point").toBool()) {
+    UiBreadcrumb::instance().stage("StoppingPoint");
     paintStoppingPoint(p, scene, frogpilot_scene, frogpilot_toggles);
   }
 
   if (!bigMapOpen && (carState.getLeftBlinker() || carState.getRightBlinker()) && signalStyle != "None") {
+    UiBreadcrumb::instance().stage("TurnSignals");
     if (!animationTimer->isActive()) {
       animationTimer->start(signalAnimationLength);
     }

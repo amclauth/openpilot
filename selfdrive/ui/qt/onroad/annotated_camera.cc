@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "common/swaglog.h"
+#include "frogpilot/ui/qt/onroad/ui_breadcrumb.h"
 #include "selfdrive/ui/qt/onroad/buttons.h"
 #include "selfdrive/ui/qt/util.h"
 
@@ -499,6 +500,9 @@ void AnnotatedCameraWidget::paintGL() {
 }
 
 void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
+  UiBreadcrumb::instance().frame_start();
+  UiBreadcrumb::instance().stage("paintEvent:setup");
+
   UIState *s = uiState();
   FrogPilotUIState *fs = frogpilotUIState();
   QJsonObject &frogpilot_toggles = fs->frogpilot_toggles;
@@ -552,6 +556,7 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
     }
     painter.beginNativePainting();
     CameraWidget::setFrameId(model.getFrameId());
+    UiBreadcrumb::instance().stage("paintGL");
     CameraWidget::paintGL();
     painter.endNativePainting();
   }
@@ -560,10 +565,12 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   painter.setPen(Qt::NoPen);
 
   if (s->scene.world_objects_visible) {
+    UiBreadcrumb::instance().stage("drawLaneLines");
     update_model(s, fs, model, sm["uiPlan"].getUiPlan(), frogpilot_toggles);
     drawLaneLines(painter, s, fs);
 
     if (s->scene.longitudinal_control && sm.rcv_frame("radarState") > s->scene.started_frame && !frogpilot_toggles.value("hide_lead_marker").toBool()) {
+      UiBreadcrumb::instance().stage("drawLeads");
       auto radar_state = sm["radarState"].getRadarState();
       auto frogpilot_radar_state = fpsm["frogpilotRadarState"].getFrogpilotRadarState();
       update_leads(s, radar_state, model.getPosition());
@@ -611,10 +618,12 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
 
   // DMoji - only draw face/arcs when DM data is available
   if (!hideBottomIcons && (sm.rcv_frame("driverStateV2") > s->scene.started_frame)) {
+    UiBreadcrumb::instance().stage("drawDriverState");
     update_dmonitoring(s, sm["driverStateV2"].getDriverStateV2(), dm_fade_state, rightHandDM);
     drawDriverState(painter, s, frogpilot_toggles);
   }
 
+  UiBreadcrumb::instance().stage("drawHud");
   drawHud(painter, frogpilotPlan, *fs, frogpilot_toggles);
 
   double cur_draw_t = millis_since_boot();
@@ -635,6 +644,9 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   if (s->scene.world_objects_visible) {
     frogpilot_nvg->paintFrogPilotWidgets(painter, *s, *fs, sm, fpsm, frogpilot_toggles);
   }
+
+  // 100ms per-frame threshold — 2x the 50ms budget at 20Hz
+  UiBreadcrumb::instance().frame_end(100);
 }
 
 void AnnotatedCameraWidget::showEvent(QShowEvent *event) {
