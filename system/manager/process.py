@@ -104,7 +104,14 @@ class ManagerProcess(ABC):
 
     if dt > self.watchdog_max_dt:
       if self.watchdog_seen and ENABLE_WATCHDOG:
-        cloudlog.error(f"Watchdog timeout for {self.name} (exitcode {self.proc.exitcode}) restarting ({started=})")
+        breadcrumb = ""
+        if self.name == "ui":
+          try:
+            with open("/dev/shm/ui_last_stage", "rb") as bf:
+              breadcrumb = bf.read(256).decode("utf-8", errors="replace").strip()
+          except Exception:
+            pass
+        cloudlog.error(f"Watchdog timeout for {self.name} (exitcode {self.proc.exitcode}) restarting ({started=}) last_stage={breadcrumb!r}")
         self.restart()
     else:
       self.watchdog_seen = True
