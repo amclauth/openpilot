@@ -131,6 +131,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   p.save();
 
   // Header gradient
+  UiBreadcrumb::instance().stage("drawHud:header");
   QLinearGradient bg(0, UI_HEADER_HEIGHT - (UI_HEADER_HEIGHT / 2.5), 0, UI_HEADER_HEIGHT);
   bg.setColorAt(0, QColor::fromRgbF(0, 0, 0, 0.45));
   bg.setColorAt(1, QColor::fromRgbF(0, 0, 0, 0));
@@ -158,6 +159,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   QRect set_speed_rect(QPoint(60 + (default_size.width() - set_speed_size.width()) / 2, 45), set_speed_size);
   if (!frogpilot_toggles.value("hide_max_speed").toBool()) {
+    UiBreadcrumb::instance().stage("drawHud:set_speed_box");
     if (fs.frogpilot_scene.traffic_mode_enabled) {
       p.setPen(QPen(redColor(), 10));
     } else {
@@ -196,6 +198,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   const QRect sign_rect = set_speed_rect.adjusted(sign_margin, default_size.height(), -sign_margin, -sign_margin);
   // US/Canada (MUTCD style) sign
   if (has_us_speed_limit) {
+    UiBreadcrumb::instance().stage("drawHud:us_sign");
     p.setPen(Qt::NoPen);
     p.setBrush(whiteColor());
     p.drawRoundedRect(sign_rect, 24, 24);
@@ -223,6 +226,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   // EU (Vienna style) sign
   if (has_eu_speed_limit) {
+    UiBreadcrumb::instance().stage("drawHud:eu_sign");
     p.setPen(Qt::NoPen);
     p.setBrush(whiteColor());
     p.drawEllipse(sign_rect);
@@ -246,6 +250,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   // current speed
   if (!frogpilot_nvg->bigMapOpen && frogpilot_nvg->standstillDuration == 0 && !frogpilot_toggles.value("hide_speed").toBool()) {
+    UiBreadcrumb::instance().stage("drawHud:current_speed");
     p.setFont(InterFont(176, QFont::Bold));
     drawText(p, rect().center().x(), 210, speedStr);
     p.setFont(InterFont(66));
@@ -255,6 +260,7 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   p.restore();
 
   // FrogPilot variables
+  UiBreadcrumb::instance().stage("drawHud:fp_setup");
   frogpilot_nvg->defaultSize = default_size;
   frogpilot_nvg->experimentalButtonPosition = QPoint(experimental_btn->x(), experimental_btn->y());
   frogpilot_nvg->hideBottomIcons = hideBottomIcons;
