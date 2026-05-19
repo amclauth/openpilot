@@ -211,11 +211,13 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   FrogPilotUIScene &frogpilot_scene = fs.frogpilot_scene;
   UIScene &scene = s.scene;
 
+  UiBreadcrumb::instance().stage("paintFrogPilotWidgets:capnp");
   const cereal::CarState::Reader &carState = fpsm["carState"].getCarState();
   const cereal::FrogPilotCarState::Reader &frogpilotCarState = fpsm["frogpilotCarState"].getFrogpilotCarState();
   const cereal::FrogPilotNavigation::Reader &frogpilotNavigation = fpsm["frogpilotNavigation"].getFrogpilotNavigation();
   const cereal::FrogPilotPlan::Reader &frogpilotPlan = fpsm["frogpilotPlan"].getFrogpilotPlan();
   const cereal::ModelDataV2::Reader &model = sm["modelV2"].getModelV2();
+  UiBreadcrumb::instance().stage("paintFrogPilotWidgets:enter");
 
   if (!hideBottomIcons && frogpilot_toggles.value("cem_status").toBool()) {
     UiBreadcrumb::instance().stage("CEMStatus");

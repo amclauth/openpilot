@@ -632,15 +632,18 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   UiBreadcrumb::instance().stage("drawHud");
   drawHud(painter, frogpilotPlan, *fs, frogpilot_toggles);
 
+  UiBreadcrumb::instance().stage("post_drawhud:fps");
   double cur_draw_t = millis_since_boot();
   double dt = cur_draw_t - prev_draw_t;
   fps = fps_filter.update(1. / dt * 1000);
   if (fps < 15) {
+    UiBreadcrumb::instance().stage("post_drawhud:slow_logw");
     LOGW("slow frame rate: %.2f fps", fps);
   }
   prev_draw_t = cur_draw_t;
 
   // publish debug msg
+  UiBreadcrumb::instance().stage("post_drawhud:pm_send");
   MessageBuilder msg;
   auto m = msg.initEvent().initUiDebug();
   m.setDrawTimeMillis(cur_draw_t - start_draw_t);
