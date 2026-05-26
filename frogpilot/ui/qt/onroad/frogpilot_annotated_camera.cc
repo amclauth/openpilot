@@ -238,6 +238,7 @@ void FrogPilotAnnotatedCameraWidget::paintFrogPilotWidgets(QPainter &p, UIState 
   if (!frogpilot_scene.map_open && !hideBottomIcons && frogpilot_toggles.value("gforce_widget").toBool()) {
     UiBreadcrumb::instance().stage("GForce");
     paintGForce(p, sm, fpsm);
+    UiBreadcrumb::instance().stage("post_gforce");
   } else {
     gforcePosition.setX(0);
     gforcePosition.setY(0);
@@ -565,6 +566,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   QPoint center(cx, cy);
 
   // Read acceleration data from liveLocationKalman (IMU-fused, works on all cars)
+  UiBreadcrumb::instance().stage("GForce:read");
   const auto &llk = sm["liveLocationKalman"].getLiveLocationKalman();
   auto accelCal = llk.getAccelerationCalibrated();
   float accel_x = 0.0f, accel_y = 0.0f;
@@ -576,6 +578,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
     }
   }
 
+  UiBreadcrumb::instance().stage("GForce:compute");
   float lon_g = gforceLongitudinalFilter.update(accel_x / GRAVITY);
   float lat_g = gforceLateralFilter.update(accel_y / GRAVITY);
   float total_g = std::sqrt(lat_g * lat_g + lon_g * lon_g);
@@ -600,6 +603,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
   }
 
   // Background circle
+  UiBreadcrumb::instance().stage("GForce:draw");
   p.setBrush(blackColor(150));
   p.setPen(QPen(whiteColor(80), 2));
   p.drawEllipse(center, gforceRadius, gforceRadius);
@@ -680,6 +684,7 @@ void FrogPilotAnnotatedCameraWidget::paintGForce(QPainter &p, SubMaster &sm, Sub
              Qt::AlignHCenter, gText);
 
   p.restore();
+  UiBreadcrumb::instance().stage("GForce:done");
 }
 
 void FrogPilotAnnotatedCameraWidget::paintCurveSpeedControl(QPainter &p, const cereal::FrogPilotPlan::Reader &frogpilotPlan) {
