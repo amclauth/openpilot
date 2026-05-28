@@ -92,7 +92,12 @@ void AnnotatedCameraWidget::updateState(const UIState &s, const FrogPilotUIState
   has_eu_speed_limit &= !frogpilot_toggles.value("hide_speed_limit").toBool() || frogpilotPlan.getSpeedLimitChanged();
   is_metric = s.scene.is_metric;
   speedUnit =  s.scene.is_metric ? tr("km/h") : tr("mph");
-  hideBottomIcons = (cs.getAlertSize() != cereal::ControlsState::AlertSize::NONE);
+  // An alert only hides the bottom icons if it will actually be drawn.
+  // hide_alerts suppresses NORMAL-status alerts (e.g. "Poor GPS reception")
+  // in OnroadAlerts, so those must not hide the widgets either (alerts.cc).
+  bool alert_hidden = cs.getAlertStatus() == cereal::ControlsState::AlertStatus::NORMAL &&
+                      frogpilot_toggles.value("hide_alerts").toBool();
+  hideBottomIcons = (cs.getAlertSize() != cereal::ControlsState::AlertSize::NONE) && !alert_hidden;
   hideBottomIcons |= (frogpilot_nvg->signalStyle == "traditional" || frogpilot_nvg->signalStyle == "traditional_gif") && (car_state.getLeftBlinker() || car_state.getRightBlinker());
   status = s.status;
 
