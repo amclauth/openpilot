@@ -661,6 +661,15 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
 
   // 100ms per-frame threshold — 2x the 50ms budget at 20Hz
   UiBreadcrumb::instance().frame_end(100);
+
+  // Final marker: everything below the widgets is un-instrumented Qt/GL --
+  // the QPainter destructor flush (closing brace) and, after paintEvent
+  // returns, the Wayland-EGL buffer composite/swap. Leaving the breadcrumb
+  // here means a freeze in that tail reads "frame_swap" instead of the last
+  // widget marker (pre:turnsig in 0x189_009). Also covers an idle hang in the
+  // event loop between frames -- either way it confirms the hang is outside
+  // our paint code, in Qt/GL/compositor land. See model_testing/claude_ui_watchdog.md.
+  UiBreadcrumb::instance().stage("frame_swap");
 }
 
 void AnnotatedCameraWidget::showEvent(QShowEvent *event) {
