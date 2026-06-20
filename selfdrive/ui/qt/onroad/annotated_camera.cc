@@ -6,7 +6,6 @@
 #include <cmath>
 
 #include "common/swaglog.h"
-#include "frogpilot/ui/qt/onroad/ui_breadcrumb.h"
 #include "selfdrive/ui/qt/onroad/buttons.h"
 #include "selfdrive/ui/qt/util.h"
 
@@ -136,7 +135,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   p.save();
 
   // Header gradient
-  UiBreadcrumb::instance().stage("drawHud:header");
   QLinearGradient bg(0, UI_HEADER_HEIGHT - (UI_HEADER_HEIGHT / 2.5), 0, UI_HEADER_HEIGHT);
   bg.setColorAt(0, QColor::fromRgbF(0, 0, 0, 0.45));
   bg.setColorAt(1, QColor::fromRgbF(0, 0, 0, 0));
@@ -164,7 +162,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   QRect set_speed_rect(QPoint(60 + (default_size.width() - set_speed_size.width()) / 2, 45), set_speed_size);
   if (!frogpilot_toggles.value("hide_max_speed").toBool()) {
-    UiBreadcrumb::instance().stage("drawHud:set_speed_box");
     if (fs.frogpilot_scene.traffic_mode_enabled) {
       p.setPen(QPen(redColor(), 10));
     } else {
@@ -203,7 +200,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   const QRect sign_rect = set_speed_rect.adjusted(sign_margin, default_size.height(), -sign_margin, -sign_margin);
   // US/Canada (MUTCD style) sign
   if (has_us_speed_limit) {
-    UiBreadcrumb::instance().stage("drawHud:us_sign");
     p.setPen(Qt::NoPen);
     p.setBrush(whiteColor());
     p.drawRoundedRect(sign_rect, 24, 24);
@@ -231,7 +227,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   // EU (Vienna style) sign
   if (has_eu_speed_limit) {
-    UiBreadcrumb::instance().stage("drawHud:eu_sign");
     p.setPen(Qt::NoPen);
     p.setBrush(whiteColor());
     p.drawEllipse(sign_rect);
@@ -255,7 +250,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
 
   // current speed
   if (!frogpilot_nvg->bigMapOpen && frogpilot_nvg->standstillDuration == 0 && !frogpilot_toggles.value("hide_speed").toBool()) {
-    UiBreadcrumb::instance().stage("drawHud:current_speed");
     p.setFont(InterFont(176, QFont::Bold));
     drawText(p, rect().center().x(), 210, speedStr);
     p.setFont(InterFont(66));
@@ -265,7 +259,6 @@ void AnnotatedCameraWidget::drawHud(QPainter &p, const cereal::FrogPilotPlan::Re
   p.restore();
 
   // FrogPilot variables
-  UiBreadcrumb::instance().stage("drawHud:fp_setup");
   frogpilot_nvg->defaultSize = default_size;
   frogpilot_nvg->experimentalButtonPosition = QPoint(experimental_btn->x(), experimental_btn->y());
   frogpilot_nvg->hideBottomIcons = hideBottomIcons;
@@ -511,8 +504,6 @@ void AnnotatedCameraWidget::paintGL() {
 }
 
 void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
-  UiBreadcrumb::instance().frame_start();
-  UiBreadcrumb::instance().stage("paintEvent:setup");
 
   UIState *s = uiState();
   FrogPilotUIState *fs = frogpilotUIState();
@@ -567,7 +558,6 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
     }
     painter.beginNativePainting();
     CameraWidget::setFrameId(model.getFrameId());
-    UiBreadcrumb::instance().stage("paintGL");
     CameraWidget::paintGL();
     painter.endNativePainting();
   }
@@ -576,12 +566,10 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   painter.setPen(Qt::NoPen);
 
   if (s->scene.world_objects_visible) {
-    UiBreadcrumb::instance().stage("drawLaneLines");
     update_model(s, fs, model, sm["uiPlan"].getUiPlan(), frogpilot_toggles);
     drawLaneLines(painter, s, fs);
 
     if (s->scene.longitudinal_control && sm.rcv_frame("radarState") > s->scene.started_frame && !frogpilot_toggles.value("hide_lead_marker").toBool()) {
-      UiBreadcrumb::instance().stage("drawLeads");
       auto radar_state = sm["radarState"].getRadarState();
       auto frogpilot_radar_state = fpsm["frogpilotRadarState"].getFrogpilotRadarState();
       update_leads(s, radar_state, model.getPosition());
@@ -629,26 +617,21 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
 
   // DMoji - only draw face/arcs when DM data is available
   if (!hideBottomIcons && (sm.rcv_frame("driverStateV2") > s->scene.started_frame)) {
-    UiBreadcrumb::instance().stage("drawDriverState");
     update_dmonitoring(s, sm["driverStateV2"].getDriverStateV2(), dm_fade_state, rightHandDM);
     drawDriverState(painter, s, frogpilot_toggles);
   }
 
-  UiBreadcrumb::instance().stage("drawHud");
   drawHud(painter, frogpilotPlan, *fs, frogpilot_toggles);
 
-  UiBreadcrumb::instance().stage("post_drawhud:fps");
   double cur_draw_t = millis_since_boot();
   double dt = cur_draw_t - prev_draw_t;
   fps = fps_filter.update(1. / dt * 1000);
   if (fps < 15) {
-    UiBreadcrumb::instance().stage("post_drawhud:slow_logw");
     LOGW("slow frame rate: %.2f fps", fps);
   }
   prev_draw_t = cur_draw_t;
 
   // publish debug msg
-  UiBreadcrumb::instance().stage("post_drawhud:pm_send");
   MessageBuilder msg;
   auto m = msg.initEvent().initUiDebug();
   m.setDrawTimeMillis(cur_draw_t - start_draw_t);
@@ -658,18 +641,6 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   if (s->scene.world_objects_visible) {
     frogpilot_nvg->paintFrogPilotWidgets(painter, *s, *fs, sm, fpsm, frogpilot_toggles);
   }
-
-  // 100ms per-frame threshold — 2x the 50ms budget at 20Hz
-  UiBreadcrumb::instance().frame_end(100);
-
-  // Final marker: everything below the widgets is un-instrumented Qt/GL --
-  // the QPainter destructor flush (closing brace) and, after paintEvent
-  // returns, the Wayland-EGL buffer composite/swap. Leaving the breadcrumb
-  // here means a freeze in that tail reads "frame_swap" instead of the last
-  // widget marker (pre:turnsig in 0x189_009). Also covers an idle hang in the
-  // event loop between frames -- either way it confirms the hang is outside
-  // our paint code, in Qt/GL/compositor land. See model_testing/claude_ui_watchdog.md.
-  UiBreadcrumb::instance().stage("frame_swap");
 }
 
 void AnnotatedCameraWidget::showEvent(QShowEvent *event) {
